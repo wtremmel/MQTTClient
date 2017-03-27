@@ -19,6 +19,8 @@
 
 #define DEBUG 1
 
+ADC_MODE(ADC_VCC);
+
 const char* ssid = "AnkhMorpork";
 const char* pass = "TheC0l0r0fMag1c";
 const char* myname = "esp1";
@@ -133,7 +135,7 @@ void sleepFor(unsigned seconds) {
 
 void reconnect() {
   // Loop until we're reconnected
-  snprintf(topic,50,"/%s/%s/sensortagd/status",site,myname);
+  snprintf(topic,50,"/%s/%s/status",site,myname);
 
   
   while (!client.connected()) {
@@ -300,8 +302,15 @@ void loop() {
       client.publish(topic,msg);
     }
 
-    if (value > 3) {
-      sleepFor(2*60);
+    snprintf(topic,50,"/%s/%s/voltage", site, myname);
+    snprintf(msg,50,"%s",String(ESP.getVcc() / 1000.0,2).c_str());
+    if (value > 2) {
+      client.publish(topic,msg);
+    }
+    
+
+    if (value > 2) {
+      sleepFor(3*60);
     }
     
   }
