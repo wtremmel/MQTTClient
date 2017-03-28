@@ -18,15 +18,31 @@
 #include <ESP8266HTTPClient.h>
 
 #define DEBUG 1
+// #define MOTION 1
+
+// Voltage when on power supply
+# define PSVOLTAGE 28000
+
+// Run modes
+#define RM_SENSOR 1
+#define RM_CONFIG 2
+
+//Pin defintions
+#define I2CSDA 4
+#define I2CSCL 5
+#define PIRINPUT 12
+#define BUZZER 13
 
 ADC_MODE(ADC_VCC);
 
+// These should be configurable at runtime
 const char* ssid = "AnkhMorpork";
 const char* pass = "TheC0l0r0fMag1c";
 const char* myname = "esp1";
 const char* mqttserver = "pi3.garf.de";
 const char* site = "Chattenweg5";
 const char* location = "Arbeitszimmer";
+
 
 WiFiServer server(80);
 WiFiClient espClient;
@@ -36,6 +52,12 @@ long lastMsg = 0;
 char msg[50];
 char topic[50];
 int value = 0;
+
+int pirInput = PIRINPUT;
+int pirState = LOW;
+
+unsigned int voltage;
+
 
 void setup() {
 
@@ -82,13 +104,19 @@ void setup() {
   }
 
   // setup i2c
-  Wire.begin(4,5);
+  Wire.begin(I2CSDA,I2CSCL);
 
   // setup light chip
   ls_setup();
   delay(10);
   // setup sensor chip
   bme_setup();
+
+  // setup PIR
+#ifdef MOTION
+  pinMode(pirInput,INPUT);
+  pirState = digitalRead(pirInput);
+#endif
 
   // setup the mqtt client
   client.setServer(mqttserver, 1883);
@@ -260,6 +288,9 @@ void bme_setup() {
 
 
 void loop() {
+
+  voltage = ESP.getVcc();
+  
   if (!client.connected()) {
     reconnect();
   }
@@ -277,6 +308,12 @@ void loop() {
     Serial.println(msg);
     // client.publish(topic,msg);
     #endif
+
+    snprintf(topic,50,"/%s/%s/voltage", site, myname);
+    snprintf(msg,50,"%s",String(voltage / 1000.0,2).c_str());
+    if (value > 2) {
+      client.publish(topic,msg);
+    }
 
     snprintf(topic,50,"/%s/%s/light", site, location);
     snprintf(msg,50,"%u", ls_read());
@@ -302,17 +339,23 @@ void loop() {
       client.publish(topic,msg);
     }
 
-    snprintf(topic,50,"/%s/%s/voltage", site, myname);
-    snprintf(msg,50,"%s",String(ESP.getVcc() / 1000.0,2).c_str());
+#ifdef MOTION
+    snprintf(topic,50,"/%s/%s/motion", site, location);
+    snprintf(msg,50,"%d", digitalRead(pirInput));
     if (value > 2) {
       client.publish(topic,msg);
     }
-    
+#endif
 
     if (value > 2) {
-      sleepFor(3*60);
+      if (voltage < PSVOLTAGE) {
+        // on battery
+        sleepFor(3*60);
+      } else {
+        // on power supply
+        delay(1000*60);
+      }
     }
-    
   }
 
 }
