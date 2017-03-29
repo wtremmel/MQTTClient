@@ -21,9 +21,14 @@
 // #define MOTION 1
 
 // Voltage when on power supply
-# define PSVOLTAGE 28000
+#define VOLTAGE_PS 28000
+// Minimum volate for operation
+#define VOLTAGE_MIN 10000
+// Go to longer intervals
+#define VOLTAGE_LOW 11000
 
 // Run modes
+#define RM_START 0
 #define RM_SENSOR 1
 #define RM_CONFIG 2
 
@@ -53,6 +58,8 @@ char msg[50];
 char topic[50];
 int value = 0;
 
+byte runMode = RM_START;
+
 int pirInput = PIRINPUT;
 int pirState = LOW;
 
@@ -64,10 +71,15 @@ void setup() {
 #ifdef DEBUG
     Serial.begin(115200);
    // USE_SERIAL.setDebugOutput(true);
-
     Serial.println("Starting");
-
 #endif
+
+  // before doing anything check if we have enough power
+  voltage = ESP.getVcc();
+  if (volate < VOLTAGE_MIN) {
+    ESP.deepSleep(1000000*60*10); // Hibernate 10 minutes.
+    delay(100);
+  }
 
   WiFi.mode(WIFI_STA);
   WiFi.hostname(myname);
@@ -78,13 +90,23 @@ void setup() {
   Serial.println(ssid);
 #endif
 
+  int retries = 0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
+    retries++;
     #ifdef DEBUG
     Serial.print(".");
     #endif
+    if (retries > 100) {
+      // no connection after lot of retries
+      runMode = RM_CONFIG;
+      break;
+    }
   }
 
+  if (WiFi.status() == WL_CONNECTED) {
+    runMode = RM_SENSOR;
+  }
 #ifdef DEBUG
   Serial.println("");
   Serial.println("Wifi connected");
@@ -348,13 +370,16 @@ void loop() {
 #endif
 
     if (value > 2) {
-      if (voltage < PSVOLTAGE) {
-        // on battery
-        sleepFor(3*60);
-      } else {
-        // on power supply
+      if (voltage >= VOLTAGE_PS) {
+         // on power supply
         delay(1000*60);
+      } else if (volate <= VOLTAGE_LOW) {
+        sleepFor(280);
+      } else {
+        // on battery, standard voltage
+        sleepFor(3*60);
       }
+      
     }
   }
 
