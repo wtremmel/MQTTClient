@@ -13,19 +13,19 @@
 #include <ESP8266mDNS.h>
 #include <Wire.h>
 #include <PubSubClient.h>
-#include <SparkFunBME280.h>
 
+#include <SparkFunBME280.h>
 #include <ESP8266HTTPClient.h>
 
 #define DEBUG 1
 // #define MOTION 1
 
 // Voltage when on power supply
-#define VOLTAGE_PS 28000
-// Minimum volate for operation
-#define VOLTAGE_MIN 10000
+#define VOLTAGE_PS 2800
 // Go to longer intervals
-#define VOLTAGE_LOW 11000
+#define VOLTAGE_LOW 2090
+// Minimum volate for operation
+#define VOLTAGE_MIN 2060
 
 // Run modes
 #define RM_START 0
@@ -76,7 +76,11 @@ void setup() {
 
   // before doing anything check if we have enough power
   voltage = ESP.getVcc();
-  if (volate < VOLTAGE_MIN) {
+  if (voltage < VOLTAGE_MIN) {
+#ifdef DEBUG
+    Serial.print("Voltage below minimum: ");
+    Serial.println(voltage);
+#endif
     ESP.deepSleep(1000000*60*10); // Hibernate 10 minutes.
     delay(100);
   }
@@ -308,27 +312,22 @@ void bme_setup() {
 
 
 
-
+unsigned int loopDelay = 2000;
 void loop() {
 
   voltage = ESP.getVcc();
   
-  if (!client.connected()) {
+  if (!client.loop()) { // check if still connected to MQTT Server
     reconnect();
   }
 
-  client.loop();
-
   long now = millis();
-  if (now - lastMsg > 2000) {
+  if (now - lastMsg > loopDelay) {
     lastMsg = now;
     ++value;
     #ifdef DEBUG
-    snprintf(topic,50,"/%s/%s/test", site, location);
-    snprintf(msg,50,"%ld", value);
     Serial.print("Publishing: ");
     Serial.println(msg);
-    // client.publish(topic,msg);
     #endif
 
     snprintf(topic,50,"/%s/%s/voltage", site, myname);
@@ -372,8 +371,8 @@ void loop() {
     if (value > 2) {
       if (voltage >= VOLTAGE_PS) {
          // on power supply
-        delay(1000*60);
-      } else if (volate <= VOLTAGE_LOW) {
+         loopDelay = 5000;
+      } else if (voltage <= VOLTAGE_LOW) {
         sleepFor(280);
       } else {
         // on battery, standard voltage
