@@ -13,24 +13,28 @@
 #include <ESP8266mDNS.h>
 #include <Wire.h>
 #include <PubSubClient.h>
+#include <FS.h>
 
 #include <SparkFunBME280.h>
 #include <ESP8266HTTPClient.h>
 
 #define DEBUG 1
 // #define MOTION 1
+#define OUTDOOR 1
+#define INDOOR 1
 
 // Voltage when on power supply
 #define VOLTAGE_PS 2800
 // Go to longer intervals
-#define VOLTAGE_LOW 2090
+#define VOLTAGE_LOW 2030
 // Minimum volate for operation
-#define VOLTAGE_MIN 2060
+#define VOLTAGE_MIN 2010
 
 // Run modes
-#define RM_START 0
-#define RM_SENSOR 1
-#define RM_CONFIG 2
+#define RM_START 1
+#define RM_SENSOR 2
+#define RM_CONFIG 4
+byte runMode = RM_START | RM_SENSOR | RM_CONFIG;
 
 //Pin defintions
 #define I2CSDA 4
@@ -40,17 +44,18 @@
 
 ADC_MODE(ADC_VCC);
 
-// These should be configurable at runtime
-const char* ssid = "AnkhMorpork";
-const char* pass = "TheC0l0r0fMag1c";
-const char* myname = "esp1";
-const char* mqttserver = "pi3.garf.de";
-const char* site = "Chattenweg5";
-const char* location = "Arbeitszimmer";
+const char* fn_ssid = "/ssid";
+const char *fn_pass = "/pass";
+const char *fn_myname = "/myname";
+const char *fn_mqttserver = "/mqttserver";
+const char *fn_site = "/site";
+const char *fn_location = "/location";
 
+String Smyname, Spass, Sssid, Smqttserver, Ssite, Slocation;
 
+// Webserver for status and config
 WiFiServer server(80);
-WiFiClient espClient;
+WiFiClient espClient, webClient;
 PubSubClient client(espClient);
 
 long lastMsg = 0;
@@ -58,13 +63,59 @@ char msg[50];
 char topic[50];
 int value = 0;
 
-byte runMode = RM_START;
 
 int pirInput = PIRINPUT;
 int pirState = LOW;
 
 unsigned int voltage;
 
+
+// read data from file and return it
+String readFromFile(const char *filename, String s) {
+  s = "";
+  if (SPIFFS.exists(filename)) {
+    File f = SPIFFS.open(filename,"r");
+    if (!f) {
+      s = "";
+    } else {
+      s = f.readString();
+      f.close();
+    }
+  } else {
+  }
+  // remove trailing cr
+  s.trim();
+  return s;
+}
+
+String htmlTableRow(String s1, String s2) {
+  String sRow =
+  String("<tr><td>" + s1 + "</td><td>" + s2 + "</td></tr>\n");
+  return sRow;
+}
+String htmlSetupPage() {
+  String htmlPage =
+  String("HTTP/1.1 200 OK\r\n") +
+            "Content-Type: text/html\r\n" +
+            "Connection: close\r\n" +  // the connection will be closed after completion of the response
+            "\r\n" +
+            "<!DOCTYPE HTML>" +
+            "<html>" +
+            "<h1>"+ Smyname + "</h1>" +
+            "<hr>" +
+            "<table>" +
+              htmlTableRow(String("Hostname:"),Smyname) +
+              htmlTableRow(String("Site name:"),Ssite) +
+              htmlTableRow(String("Location:"), Slocation) +
+              htmlTableRow(String("Wifi SSID:"),Sssid) +
+              htmlTableRow(String("Password:"),Spass) +
+              htmlTableRow(String("MQTT Server:"),Smqttserver) +
+            "</table>" +
+            "</html>" +
+            "\r\n";
+  return htmlPage;
+
+}
 
 void setup() {
 
@@ -76,7 +127,7 @@ void setup() {
 
   // before doing anything check if we have enough power
   voltage = ESP.getVcc();
-  if (voltage < VOLTAGE_MIN) {
+  if (voltage <= VOLTAGE_MIN) {
 #ifdef DEBUG
     Serial.print("Voltage below minimum: ");
     Serial.println(voltage);
@@ -85,13 +136,43 @@ void setup() {
     delay(100);
   }
 
+  // setup filesystem
+  SPIFFS.begin();
+
+  // read configs from files
+  Smyname = readFromFile(fn_myname,Smyname);
+  Sssid = readFromFile(fn_ssid,Sssid);
+  Spass = readFromFile(fn_pass,Spass);
+  Smqttserver = readFromFile(fn_mqttserver,Smqttserver);
+  Ssite = readFromFile(fn_site,Ssite);
+  Slocation = readFromFile(fn_location,Slocation);
+
+#ifdef DEBUG
+  Serial.println("Config data:");
+  Serial.print(fn_myname);
+  Serial.print("=");
+  Serial.println(Smyname);
+  Serial.print(fn_ssid);
+  Serial.print("=");
+  Serial.println(Sssid);
+  Serial.print(fn_pass);
+  Serial.print("=");
+  Serial.println(Spass);
+  Serial.print(fn_site);
+  Serial.print("=");
+  Serial.println(Ssite);
+  Serial.print(fn_location);
+  Serial.print("=");
+  Serial.println(Slocation);
+#endif
+
   WiFi.mode(WIFI_STA);
-  WiFi.hostname(myname);
-  WiFi.begin(ssid, pass);
+  WiFi.hostname(Smyname);
+  WiFi.begin(Sssid.c_str(), Spass.c_str());
 
 #ifdef DEBUG
   Serial.print("Connecting to ");
-  Serial.println(ssid);
+  Serial.println(Sssid);
 #endif
 
   int retries = 0;
@@ -103,13 +184,14 @@ void setup() {
     #endif
     if (retries > 100) {
       // no connection after lot of retries
-      runMode = RM_CONFIG;
-      break;
+      runMode |= RM_CONFIG;
+      // break;
     }
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    runMode = RM_SENSOR;
+    runMode &= ~RM_START;
+    runMode |= RM_SENSOR;
   }
 #ifdef DEBUG
   Serial.println("");
@@ -120,7 +202,7 @@ void setup() {
   Serial.println(WiFi.subnetMask());
 #endif
 
-  if (MDNS.begin(myname)) {
+  if (MDNS.begin(Smyname.c_str())) {
     MDNS.addService("http","tcp",80);
 #ifdef DEBUG
     Serial.println("mDNS responder started");
@@ -128,6 +210,9 @@ void setup() {
     Serial.println("Error starting mDNS");
 #endif
   }
+
+  // start webserver
+  server.begin();
 
   // setup i2c
   Wire.begin(I2CSDA,I2CSCL);
@@ -145,7 +230,7 @@ void setup() {
 #endif
 
   // setup the mqtt client
-  client.setServer(mqttserver, 1883);
+  client.setServer(Smqttserver.c_str(), 1883);
   client.setCallback(callback);
 
 }
@@ -189,7 +274,7 @@ void sleepFor(unsigned seconds) {
 
 void reconnect() {
   // Loop until we're reconnected
-  snprintf(topic,50,"/%s/%s/status",site,myname);
+  snprintf(topic,50,"/%s/%s/status",Ssite.c_str(),Smyname.c_str());
 
   
   while (!client.connected()) {
@@ -197,7 +282,7 @@ void reconnect() {
     Serial.print("Attempting MQTT connection...");
 #endif
     // Attempt to connect
-    if (client.connect(myname,topic,0,0,"stopped")) {
+    if (client.connect(Smyname.c_str(),topic,0,0,"stopped")) {
 #ifdef DEBUG
       Serial.println("connected");
 #endif
@@ -205,7 +290,7 @@ void reconnect() {
       
       client.publish(topic,"started");
       // ... and resubscribe to my name
-      client.subscribe(myname);
+      client.subscribe(Smyname.c_str());
     } else {
 #ifdef DEBUG
       Serial.print("failed, rc=");
@@ -321,6 +406,27 @@ void loop() {
     reconnect();
   }
 
+  if (runMode & RM_CONFIG) {
+    webClient = server.available();
+  }
+
+  if (webClient) {
+    Serial.println("Webclient connected");
+    while (webClient.connected()) {
+      if (webClient.available()) {
+        String line = webClient.readStringUntil('\r');
+        Serial.print(line);
+        if (line.length() == 1 && line[0] == '\n') {
+          webClient.println(htmlSetupPage());
+          break;
+        }
+      }
+    }
+    delay(1);
+    webClient.stop();
+    Serial.println("Client disconnected");
+  }
+
   long now = millis();
   if (now - lastMsg > loopDelay) {
     lastMsg = now;
@@ -330,38 +436,38 @@ void loop() {
     Serial.println(msg);
     #endif
 
-    snprintf(topic,50,"/%s/%s/voltage", site, myname);
+    snprintf(topic,50,"/%s/%s/voltage", Ssite.c_str(), Smyname.c_str());
     snprintf(msg,50,"%s",String(voltage / 1000.0,2).c_str());
     if (value > 2) {
       client.publish(topic,msg);
     }
 
-    snprintf(topic,50,"/%s/%s/light", site, location);
+    snprintf(topic,50,"/%s/%s/light", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%u", ls_read());
     if (value > 2) {
       client.publish(topic,msg);
     }
 
-    snprintf(topic,50,"/%s/%s/temperature", site, location);
+    snprintf(topic,50,"/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%s",String(wetterSensor.readTempC(),2).c_str());
     if (value > 2) {
       client.publish(topic,msg);
     }
 
-    snprintf(topic,50,"/%s/%s/airpressure", site, location);
+    snprintf(topic,50,"/%s/%s/airpressure", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%s",String(wetterSensor.readFloatPressure()/100,2).c_str());
     if (value > 2) {
       client.publish(topic,msg);
     }
 
-    snprintf(topic,50,"/%s/%s/humidity", site, location);
+    snprintf(topic,50,"/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%s",String(wetterSensor.readFloatHumidity(),2).c_str());
     if (value > 2) {
       client.publish(topic,msg);
     }
 
-#ifdef MOTION
-    snprintf(topic,50,"/%s/%s/motion", site, location);
+#ifdef INDOOR
+    snprintf(topic,50,"/%s/%s/motion", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%d", digitalRead(pirInput));
     if (value > 2) {
       client.publish(topic,msg);
