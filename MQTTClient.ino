@@ -1,3 +1,4 @@
+
 /**
  * MQTTCLient.ino
  * 
@@ -23,6 +24,18 @@
 #define OUTDOOR 1
 #define INDOOR 1
 
+//Pin defintions
+#define I2CSDA 4
+#define I2CSCL 5
+#define PIRINPUT 12
+#define BUZZER 13
+#define NEOPIXEL 14
+
+#ifdef INDOOR
+#include <Adafruit_NeoPixel.h>
+Adafruit_NeoPixel led = Adafruit_NeoPixel(1,NEOPIXEL,NEO_GRB+NEO_KHZ800);
+#endif
+
 // Voltage when on power supply
 #define VOLTAGE_PS 2800
 // Go to longer intervals
@@ -36,11 +49,6 @@
 #define RM_CONFIG 4
 byte runMode = RM_START | RM_SENSOR | RM_CONFIG;
 
-//Pin defintions
-#define I2CSDA 4
-#define I2CSCL 5
-#define PIRINPUT 12
-#define BUZZER 13
 
 ADC_MODE(ADC_VCC);
 
@@ -93,6 +101,13 @@ String htmlTableRow(String s1, String s2) {
   String("<tr><td>" + s1 + "</td><td>" + s2 + "</td></tr>\n");
   return sRow;
 }
+
+String htmlInput(const char* id, String s) {
+  String sIn =
+  String("<input id=\"" + String(id) + "\" value=\"" + s + "\">");
+  return sIn;
+}
+
 String htmlSetupPage() {
   String htmlPage =
   String("HTTP/1.1 200 OK\r\n") +
@@ -103,18 +118,29 @@ String htmlSetupPage() {
             "<html>" +
             "<h1>"+ Smyname + "</h1>" +
             "<hr>" +
+            "<form method=\"post\">" +
             "<table>" +
-              htmlTableRow(String("Hostname:"),Smyname) +
-              htmlTableRow(String("Site name:"),Ssite) +
-              htmlTableRow(String("Location:"), Slocation) +
-              htmlTableRow(String("Wifi SSID:"),Sssid) +
-              htmlTableRow(String("Password:"),Spass) +
-              htmlTableRow(String("MQTT Server:"),Smqttserver) +
+              htmlTableRow(String("Hostname:"),htmlInput(fn_myname,Smyname)) +
+              htmlTableRow(String("Site name:"),htmlInput(fn_site,Ssite)) +
+              htmlTableRow(String("Location:"), htmlInput(fn_location,Slocation)) +
+              htmlTableRow(String("Wifi SSID:"),htmlInput(fn_ssid,Sssid)) +
+              // htmlTableRow(String("Password:"),Spass) +
+              htmlTableRow(String("MQTT Server:"),htmlInput(fn_mqttserver,Smqttserver)) +
+              htmlTableRow(String("<button type=\"submit\">Submit</button>"),String("")) +
             "</table>" +
+            "</form>" +
             "</html>" +
             "\r\n";
   return htmlPage;
 
+}
+
+// led funtion. in case of not indoor it does nothing
+void setled(byte r, byte g, byte b) {
+#ifdef INDOOR
+  led.setPixelColor(0,r,g,b);
+  led.show();
+#endif
 }
 
 void setup() {
@@ -136,6 +162,12 @@ void setup() {
     delay(100);
   }
 
+#ifdef INDOOR
+  led.begin();
+  led.show();
+#endif
+
+  setled(255,0,0);
   // setup filesystem
   SPIFFS.begin();
 
@@ -168,13 +200,16 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.hostname(Smyname);
+  WiFi.disconnect();
+  delay(100);
   WiFi.begin(Sssid.c_str(), Spass.c_str());
-
+  
 #ifdef DEBUG
   Serial.print("Connecting to ");
   Serial.println(Sssid);
 #endif
 
+  setled(255,128,0);
   int retries = 0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -188,6 +223,9 @@ void setup() {
       // break;
     }
   }
+
+  setled(0,255,0);
+
 
   if (WiFi.status() == WL_CONNECTED) {
     runMode &= ~RM_START;
@@ -233,6 +271,7 @@ void setup() {
   client.setServer(Smqttserver.c_str(), 1883);
   client.setCallback(callback);
 
+  setled(0,0,0);
 }
 
 void callback(char* topic, byte* payload, unsigned int length)  {
@@ -255,6 +294,23 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     ESP.reset();
   } else if (in.equals(String("sleep"))) {
     sleepFor(60);
+  } else if (in.startsWith("led ")) {
+    int position=0;
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    int r = in.substring(position).toInt();
+    position++;
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    int g = in.substring(position).toInt();
+    position++;
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    int b = in.substring(position).toInt();
+    setled(r,g,b);
   }
   else { 
     #ifdef DEBUG
@@ -264,6 +320,7 @@ void callback(char* topic, byte* payload, unsigned int length)  {
 }
 
 void sleepFor(unsigned seconds) {
+  setled(0,0,0);
   ls_shutdown(); // shutdown light sensor
   client.disconnect(); //disconnect from MQTT
   WiFi.disconnect(); // disconnect from Wifi
@@ -274,21 +331,23 @@ void sleepFor(unsigned seconds) {
 
 void reconnect() {
   // Loop until we're reconnected
-  snprintf(topic,50,"/%s/%s/status",Ssite.c_str(),Smyname.c_str());
+  char mytopic[50];
+  snprintf(mytopic,50,"/%s/%s/status",Ssite.c_str(),Smyname.c_str());
 
-  
   while (!client.connected()) {
 #ifdef DEBUG
     Serial.print("Attempting MQTT connection...");
+    Serial.print(client.state());
+    Serial.print("...");
 #endif
     // Attempt to connect
-    if (client.connect(Smyname.c_str(),topic,0,0,"stopped")) {
+    if (client.connect(Smyname.c_str(),mytopic,0,0,"stopped")) {
 #ifdef DEBUG
       Serial.println("connected");
 #endif
       // Once connected, publish an announcement...
       
-      client.publish(topic,"started");
+      client.publish(mytopic,"started");
       // ... and resubscribe to my name
       client.subscribe(Smyname.c_str());
     } else {
@@ -402,9 +461,8 @@ void loop() {
 
   voltage = ESP.getVcc();
   
-  if (!client.loop()) { // check if still connected to MQTT Server
-    reconnect();
-  }
+  if (!client.loop()) reconnect(); // check if still connected to MQTT Server reconnect();
+
 
   if (runMode & RM_CONFIG) {
     webClient = server.available();
@@ -433,7 +491,7 @@ void loop() {
     ++value;
     #ifdef DEBUG
     Serial.print("Publishing: ");
-    Serial.println(msg);
+    Serial.println(now);
     #endif
 
     snprintf(topic,50,"/%s/%s/voltage", Ssite.c_str(), Smyname.c_str());
@@ -477,7 +535,7 @@ void loop() {
     if (value > 2) {
       if (voltage >= VOLTAGE_PS) {
          // on power supply
-         loopDelay = 5000;
+         loopDelay = 3000;
       } else if (voltage <= VOLTAGE_LOW) {
         sleepFor(280);
       } else {
