@@ -20,9 +20,8 @@
 #include <ESP8266HTTPClient.h>
 
 #define DEBUG 1
-// #define MOTION 1
 #define OUTDOOR 1
-#define INDOOR 1
+// #define INDOOR 1
 
 //Pin defintions
 #define I2CSDA 4
@@ -65,6 +64,10 @@ String Smyname, Spass, Sssid, Smqttserver, Ssite, Slocation;
 WiFiServer server(80);
 WiFiClient espClient, webClient;
 PubSubClient client(espClient);
+// experimental
+WiFiEventHandler disconnectedEventHandler;
+
+
 
 long lastMsg = 0;
 char msg[50];
@@ -93,6 +96,14 @@ String readFromFile(const char *filename, String s) {
   }
   // remove trailing cr
   s.trim();
+  return s;
+}
+
+// write into file
+String writeFile(const char *filename, String s) {
+  File f = SPIFFS.open(filename, "w");
+  f.println(s);
+  f.close();
   return s;
 }
 
@@ -148,7 +159,15 @@ void setup() {
 #ifdef DEBUG
     Serial.begin(115200);
    // USE_SERIAL.setDebugOutput(true);
-    Serial.println("Starting");
+    Serial.println("\nStarting");
+    Serial.print("Sleep mode:");
+    Serial.println(WiFi.getSleepMode());
+    Serial.print("Phy mode:");
+    Serial.println(WiFi.getPhyMode());
+    Serial.print("Reset reason:");
+    Serial.println(ESP.getResetReason());
+    Serial.print("Reset info:");
+    Serial.println(ESP.getResetInfo());
 #endif
 
   // before doing anything check if we have enough power
@@ -198,7 +217,7 @@ void setup() {
   Serial.println(Slocation);
 #endif
 
-  WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);
   WiFi.hostname(Smyname);
   WiFi.disconnect();
   delay(100);
@@ -291,7 +310,7 @@ void callback(char* topic, byte* payload, unsigned int length)  {
   }
   
   if (in.equals(String("reboot"))) {
-    ESP.reset();
+    ESP.restart();
   } else if (in.equals(String("sleep"))) {
     sleepFor(60);
   } else if (in.startsWith("led ")) {
@@ -311,6 +330,21 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     }
     int b = in.substring(position).toInt();
     setled(r,g,b);
+  } else if (in.startsWith("location ")) {
+    int position=0;
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    Slocation = writeFile(fn_location,in.substring(position+1));
+#ifdef DEBUG
+    String newLocation;
+    newLocation = readFromFile(fn_location,newLocation);
+    Serial.print("New Location: \"");
+    Serial.print(Slocation);
+    Serial.print("=");
+    Serial.print(newLocation);
+    Serial.println("\"");
+#endif
   }
   else { 
     #ifdef DEBUG
@@ -323,43 +357,43 @@ void sleepFor(unsigned seconds) {
   setled(0,0,0);
   ls_shutdown(); // shutdown light sensor
   client.disconnect(); //disconnect from MQTT
+  delay(100);
   WiFi.disconnect(); // disconnect from Wifi
-  
+  delay(200);
   ESP.deepSleep(1000000*seconds);
   delay(100);
 }
 
-void reconnect() {
+boolean reconnect() {
   // Loop until we're reconnected
   char mytopic[50];
   snprintf(mytopic,50,"/%s/%s/status",Ssite.c_str(),Smyname.c_str());
 
-  while (!client.connected()) {
+
+
 #ifdef DEBUG
-    Serial.print("Attempting MQTT connection...");
-    Serial.print(client.state());
-    Serial.print("...");
+  Serial.print("Attempting MQTT connection...");
+  Serial.print(client.state());
+  Serial.print("...");
 #endif
-    // Attempt to connect
-    if (client.connect(Smyname.c_str(),mytopic,0,0,"stopped")) {
+  // Attempt to connect
+  if (client.connect(Smyname.c_str(),mytopic,0,0,"stopped")) {
 #ifdef DEBUG
-      Serial.println("connected");
+    Serial.println("connected");
 #endif
-      // Once connected, publish an announcement...
+    // Once connected, publish an announcement...
       
-      client.publish(mytopic,"started");
-      // ... and resubscribe to my name
-      client.subscribe(Smyname.c_str());
-    } else {
+    client.publish(mytopic,"started");
+    // ... and resubscribe to my name
+    client.subscribe(Smyname.c_str());
+  } else {
 #ifdef DEBUG
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
+    Serial.print("failed, rc=");
+    Serial.print(client.state());
+    Serial.println(" try again in 5 seconds");
 #endif
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
   }
+  return client.connected();
 }
 
 /******************************************** Lichtsensor */
@@ -457,12 +491,22 @@ void bme_setup() {
 
 
 unsigned int loopDelay = 2000;
+unsigned long lastReconnectAttempt = 0;
 void loop() {
 
   voltage = ESP.getVcc();
   
-  if (!client.loop()) reconnect(); // check if still connected to MQTT Server reconnect();
-
+  if (!client.connected()) {
+    long now = millis();
+    if (now - lastReconnectAttempt > 5000) {
+      lastReconnectAttempt = now;
+      if (reconnect()) {
+        lastReconnectAttempt = 0;
+      }
+    }
+  } else {
+    client.loop();
+  }
 
   if (runMode & RM_CONFIG) {
     webClient = server.available();
@@ -495,7 +539,7 @@ void loop() {
     #endif
 
     snprintf(topic,50,"/%s/%s/voltage", Ssite.c_str(), Smyname.c_str());
-    snprintf(msg,50,"%s",String(voltage / 1000.0,2).c_str());
+    snprintf(msg,50,"%s",String(voltage / 1000.0,3).c_str());
     if (value > 2) {
       client.publish(topic,msg);
     }
@@ -542,6 +586,8 @@ void loop() {
         // on battery, standard voltage
         sleepFor(3*60);
       }
+      
+    } else {
       
     }
   }
