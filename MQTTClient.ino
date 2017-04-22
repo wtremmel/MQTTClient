@@ -11,7 +11,7 @@
 #include <Arduino.h>
 
 #include <ESP8266WiFi.h>
-#include <ESP8266mDNS.h>
+// #include <ESP8266mDNS.h>
 #include <Wire.h>
 #include <PubSubClient.h>
 #include <FS.h>
@@ -20,8 +20,8 @@
 #include <ESP8266HTTPClient.h>
 
 #define DEBUG 1
-#define OUTDOOR 1
-// #define INDOOR 1
+// #define OUTDOOR 1
+#define INDOOR 1
 
 //Pin defintions
 #define I2CSDA 4
@@ -31,12 +31,13 @@
 #define NEOPIXEL 14
 
 #ifdef INDOOR
+#define NROFLEDS 10
 #include <Adafruit_NeoPixel.h>
-Adafruit_NeoPixel led = Adafruit_NeoPixel(1,NEOPIXEL,NEO_GRB+NEO_KHZ800);
+Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS,NEOPIXEL,NEO_GRB+NEO_KHZ800);
 #endif
 
 // Voltage when on power supply
-#define VOLTAGE_PS 2800
+#define VOLTAGE_PS 2700
 // Go to longer intervals
 #define VOLTAGE_LOW 2030
 // Minimum volate for operation
@@ -63,7 +64,7 @@ String Smyname, Spass, Sssid, Smqttserver, Ssite, Slocation;
 // Webserver for status and config
 WiFiServer server(80);
 WiFiClient espClient, webClient;
-PubSubClient client(espClient);
+PubSubClient client;
 // experimental
 WiFiEventHandler disconnectedEventHandler;
 
@@ -154,6 +155,78 @@ void setled(byte r, byte g, byte b) {
 #endif
 }
 
+void setled(byte n, byte r, byte g, byte b) {
+#ifdef INDOOR
+  led.setPixelColor(n,r,g,b);
+  led.show();
+#endif
+}
+
+void setled(byte n, byte r, byte g, byte b, byte show) {
+#ifdef INDOOR
+  led.setPixelColor(n,r,g,b);
+  if (show) {
+    led.show();
+  }
+#endif
+}
+
+void setled(byte show) {
+#ifdef INDOOR
+  if (!show) {
+    int i;
+    for (i=0;i<NROFLEDS;i++) {
+      setled(i,0,0,0,0);
+    }
+  }
+  led.show();
+#endif
+}
+
+
+void printConfig() {
+#ifdef DEBUG
+  String s;
+  Serial.println("Config data in memory / in file:");
+  Serial.print(fn_myname);
+  Serial.print("=");
+  Serial.print(Smyname);
+  Serial.print(" / ");
+  Serial.println(readFromFile(fn_myname,s));
+  
+  Serial.print(fn_ssid);
+  Serial.print("=");
+  Serial.print(Sssid);
+  Serial.print(" / ");
+  Serial.println(readFromFile(fn_ssid,s));
+  
+  Serial.print(fn_pass);
+  Serial.print("=");
+  Serial.print(Spass);
+  Serial.print(" / ");
+  Serial.println(readFromFile(fn_pass,s));
+  
+  Serial.print(fn_site);
+  Serial.print("=");
+  Serial.print(Ssite);
+  Serial.print(" / ");
+  Serial.println(readFromFile(fn_site,s));
+  
+  Serial.print(fn_location);
+  Serial.print("=");
+  Serial.print(Slocation);
+  Serial.print(" / ");
+  Serial.println(readFromFile(fn_location,s));
+  
+  Serial.print(fn_mqttserver);
+  Serial.print("=");
+  Serial.println(Smqttserver);
+  Serial.print(" / ");
+  Serial.println(readFromFile(fn_mqttserver,s));
+
+#endif
+}
+
 void setup() {
 
 #ifdef DEBUG
@@ -199,22 +272,7 @@ void setup() {
   Slocation = readFromFile(fn_location,Slocation);
 
 #ifdef DEBUG
-  Serial.println("Config data:");
-  Serial.print(fn_myname);
-  Serial.print("=");
-  Serial.println(Smyname);
-  Serial.print(fn_ssid);
-  Serial.print("=");
-  Serial.println(Sssid);
-  Serial.print(fn_pass);
-  Serial.print("=");
-  Serial.println(Spass);
-  Serial.print(fn_site);
-  Serial.print("=");
-  Serial.println(Ssite);
-  Serial.print(fn_location);
-  Serial.print("=");
-  Serial.println(Slocation);
+  printConfig();
 #endif
 
   WiFi.persistent(false);
@@ -259,14 +317,14 @@ void setup() {
   Serial.println(WiFi.subnetMask());
 #endif
 
+#ifdef UNDEF
   if (MDNS.begin(Smyname.c_str())) {
     MDNS.addService("http","tcp",80);
-#ifdef DEBUG
     Serial.println("mDNS responder started");
   } else {
     Serial.println("Error starting mDNS");
-#endif
   }
+#endif
 
   // start webserver
   server.begin();
@@ -287,6 +345,7 @@ void setup() {
 #endif
 
   // setup the mqtt client
+  client.setClient(espClient);
   client.setServer(Smqttserver.c_str(), 1883);
   client.setCallback(callback);
 
@@ -330,22 +389,83 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     }
     int b = in.substring(position).toInt();
     setled(r,g,b);
+  } 
+
+  // LEDs off
+  else if (in.startsWith("ledsoff")) {
+    setled(0);
+  }
+  
+  // LED code in binary
+  else if (in.startsWith("ledb ")) {
+    int position=0;
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    byte thisLED = 0;
+    position++;
+    while (position+2 < length) {
+      setled(thisLED, payload[position+0],payload[position+1],payload[position+2],0);
+      position+=3;
+      thisLED++;
+    }
+    setled(1);
+  }
+  else if (in.startsWith("ledn ")) {
+    int position=0;
+
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    int n = in.substring(position).toInt();
+    position++;
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    int r = in.substring(position).toInt();
+    position++;
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    int g = in.substring(position).toInt();
+    position++;
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    int b = in.substring(position).toInt();
+    setled(n,r,g,b);
+  
+  // Location  
   } else if (in.startsWith("location ")) {
     int position=0;
     while (in.substring(position,position+1) != " " && position < in.length()){
       position++;
     }
-    Slocation = writeFile(fn_location,in.substring(position+1));
-#ifdef DEBUG
-    String newLocation;
-    newLocation = readFromFile(fn_location,newLocation);
-    Serial.print("New Location: \"");
-    Serial.print(Slocation);
-    Serial.print("=");
-    Serial.print(newLocation);
-    Serial.println("\"");
-#endif
+    writeFile(fn_location,in.substring(position+1));
+    printConfig();
   }
+
+  // Mqttserver
+  else if (in.startsWith("mqttserver ")) {
+    int position=0;
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    writeFile(fn_mqttserver,in.substring(position+1));
+    printConfig();
+  }
+
+  // Site
+  else if (in.startsWith("site ")) {
+    int position=0;
+    while (in.substring(position,position+1) != " " && position < in.length()){
+      position++;
+    }
+    writeFile(fn_site,in.substring(position+1));
+    printConfig();
+  }
+
+  
   else { 
     #ifdef DEBUG
     Serial.println("unknown command received: " + in);
@@ -354,6 +474,7 @@ void callback(char* topic, byte* payload, unsigned int length)  {
 }
 
 void sleepFor(unsigned seconds) {
+#ifdef OUTDOOR
   setled(0,0,0);
   ls_shutdown(); // shutdown light sensor
   client.disconnect(); //disconnect from MQTT
@@ -362,6 +483,7 @@ void sleepFor(unsigned seconds) {
   delay(200);
   ESP.deepSleep(1000000*seconds);
   delay(100);
+#endif
 }
 
 boolean reconnect() {
@@ -377,15 +499,18 @@ boolean reconnect() {
   Serial.print("...");
 #endif
   // Attempt to connect
-  if (client.connect(Smyname.c_str(),mytopic,0,0,"stopped")) {
+  // if (client.connect(Smyname.c_str(),mytopic,0,0,"stopped")) {
+  if (client.connect(Smyname.c_str())) {
 #ifdef DEBUG
     Serial.println("connected");
 #endif
     // Once connected, publish an announcement...
       
     client.publish(mytopic,"started");
+    delay(10);
     // ... and resubscribe to my name
     client.subscribe(Smyname.c_str());
+    delay(10);
   } else {
 #ifdef DEBUG
     Serial.print("failed, rc=");
@@ -488,13 +613,30 @@ void bme_setup() {
 #endif
 }
 
+unsigned long lastReconnectAttempt = 0;
+void myPublish(char *topic, char *msg) {
+  if (!client.connected()) {
+    long now = millis();
+    if (now - lastReconnectAttempt > 5000) {
+      lastReconnectAttempt = now;
+      if (reconnect()) {
+        lastReconnectAttempt = 0;
+      }
+    }
+  }
+  client.loop();
+#ifdef DEBUG
+  Serial.print("Publish message: ");
+  Serial.print(topic);
+  Serial.print(" ");
+  Serial.println(msg);
+#endif
+  client.publish(topic,msg);
+}
 
 
 unsigned int loopDelay = 2000;
-unsigned long lastReconnectAttempt = 0;
 void loop() {
-
-  voltage = ESP.getVcc();
   
   if (!client.connected()) {
     long now = millis();
@@ -504,14 +646,14 @@ void loop() {
         lastReconnectAttempt = 0;
       }
     }
-  } else {
-    client.loop();
   }
-
+  client.loop();
+  
   if (runMode & RM_CONFIG) {
     webClient = server.available();
   }
 
+#ifdef UNDEF
   if (webClient) {
     Serial.println("Webclient connected");
     while (webClient.connected()) {
@@ -528,51 +670,49 @@ void loop() {
     webClient.stop();
     Serial.println("Client disconnected");
   }
+#endif
 
   long now = millis();
   if (now - lastMsg > loopDelay) {
     lastMsg = now;
     ++value;
-    #ifdef DEBUG
-    Serial.print("Publishing: ");
-    Serial.println(now);
-    #endif
 
+    voltage = ESP.getVcc();
     snprintf(topic,50,"/%s/%s/voltage", Ssite.c_str(), Smyname.c_str());
     snprintf(msg,50,"%s",String(voltage / 1000.0,3).c_str());
     if (value > 2) {
-      client.publish(topic,msg);
+      myPublish(topic,msg);
     }
 
     snprintf(topic,50,"/%s/%s/light", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%u", ls_read());
     if (value > 2) {
-      client.publish(topic,msg);
+      myPublish(topic,msg);
     }
 
     snprintf(topic,50,"/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%s",String(wetterSensor.readTempC(),2).c_str());
     if (value > 2) {
-      client.publish(topic,msg);
+      myPublish(topic,msg);
     }
 
     snprintf(topic,50,"/%s/%s/airpressure", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%s",String(wetterSensor.readFloatPressure()/100,2).c_str());
     if (value > 2) {
-      client.publish(topic,msg);
+      myPublish(topic,msg);
     }
 
     snprintf(topic,50,"/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%s",String(wetterSensor.readFloatHumidity(),2).c_str());
     if (value > 2) {
-      client.publish(topic,msg);
+      myPublish(topic,msg);
     }
 
 #ifdef INDOOR
     snprintf(topic,50,"/%s/%s/motion", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%d", digitalRead(pirInput));
     if (value > 2) {
-      client.publish(topic,msg);
+      myPublish(topic,msg);
     }
 #endif
 
@@ -591,6 +731,5 @@ void loop() {
       
     }
   }
-
 }
 
