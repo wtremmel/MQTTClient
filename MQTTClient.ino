@@ -20,8 +20,8 @@
 #include <ESP8266HTTPClient.h>
 
 #define DEBUG 1
-// #define OUTDOOR 1
-#define INDOOR 1
+#define OUTDOOR 1
+// #define INDOOR 1
 
 //Pin defintions
 #define I2CSDA 4
@@ -677,12 +677,14 @@ void loop() {
     lastMsg = now;
     ++value;
 
+#ifdef OUTDOOR
     voltage = ESP.getVcc();
     snprintf(topic,50,"/%s/%s/voltage", Ssite.c_str(), Smyname.c_str());
     snprintf(msg,50,"%s",String(voltage / 1000.0,3).c_str());
     if (value > 2) {
       myPublish(topic,msg);
     }
+#endif
 
     snprintf(topic,50,"/%s/%s/light", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%u", ls_read());
