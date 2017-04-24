@@ -20,8 +20,8 @@
 #include <ESP8266HTTPClient.h>
 
 #define DEBUG 1
-#define OUTDOOR 1
-// #define INDOOR 1
+// #define OUTDOOR 1
+#define INDOOR 1
 
 //Pin defintions
 #define I2CSDA 4
