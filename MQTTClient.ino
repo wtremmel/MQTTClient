@@ -22,16 +22,17 @@
 #define DEBUG 1
 // #define OUTDOOR 1
 #define INDOOR 1
+#define BME280ADDR 0x76
 
 //Pin defintions
-#define I2CSDA 4
-#define I2CSCL 5
+#define I2CSDA 4  //D2
+#define I2CSCL 5  //D1
 #define PIRINPUT 12
 #define BUZZER 13
-#define NEOPIXEL 14
+#define NEOPIXEL 14 //D5
 
 #ifdef INDOOR
-#define NROFLEDS 10
+#define NROFLEDS 1
 #include <Adafruit_NeoPixel.h>
 Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS,NEOPIXEL,NEO_GRB+NEO_KHZ800);
 #endif
@@ -596,7 +597,7 @@ uint32_t ls_read() {
 BME280 wetterSensor;
 void bme_setup() {
   wetterSensor.settings.commInterface = I2C_MODE;
-  wetterSensor.settings.I2CAddress = 0x77;
+  wetterSensor.settings.I2CAddress = BME280ADDR;
   wetterSensor.settings.runMode = 3;
   wetterSensor.settings.tStandby = 0;
   wetterSensor.settings.filter = 0;
@@ -734,4 +735,5 @@ void loop() {
     }
   }
 }
+
 
