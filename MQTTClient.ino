@@ -8,6 +8,23 @@
  *
  */
 
+#define ESP1 // Test Arbeitszimmer
+#define ESP2 // Kueche
+#define ESP2 // Loggia
+
+#if defined(ESP1)
+#define OUTDOOR 1
+#define BME280ADDR 0x76
+#define DEBUG 1
+#elif defined(ESP2)
+#define INDOOR 1
+#define NROFLEDS 10
+#define BME280ADDR 0x76
+#elif defined(ESP3)
+#define OUTDOOR 1
+#define BME280ADDR 0x76
+#endif
+
 #include <Arduino.h>
 
 #include <ESP8266WiFi.h>
@@ -19,11 +36,6 @@
 #include <SparkFunBME280.h>
 #include <ESP8266HTTPClient.h>
 
-#define DEBUG 1
-// #define OUTDOOR 1
-#define INDOOR 1
-#define BME280ADDR 0x76
-
 //Pin defintions
 #define I2CSDA 4  //D2
 #define I2CSCL 5  //D1
@@ -32,7 +44,6 @@
 #define NEOPIXEL 14 //D5
 
 #ifdef INDOOR
-#define NROFLEDS 1
 #include <Adafruit_NeoPixel.h>
 Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS,NEOPIXEL,NEO_GRB+NEO_KHZ800);
 #endif
@@ -637,6 +648,8 @@ void myPublish(char *topic, char *msg) {
 
 
 unsigned int loopDelay = 2000;
+int lastMotion = 0, thisMotion = 0;
+
 void loop() {
   
   if (!client.connected()) {
@@ -672,9 +685,13 @@ void loop() {
     Serial.println("Client disconnected");
   }
 #endif
-
+#ifdef INDOOR
+  thisMotion = digitalRead(pirInput);
+#else
+  thisMotion = lastMotion;
+#endif
   long now = millis();
-  if (now - lastMsg > loopDelay) {
+  if ((now - lastMsg > loopDelay) || (lastMotion != thisMotion)) {
     lastMsg = now;
     ++value;
 
@@ -712,8 +729,9 @@ void loop() {
     }
 
 #ifdef INDOOR
+    lastMotion = thisMotion;
     snprintf(topic,50,"/%s/%s/motion", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg,50,"%d", digitalRead(pirInput));
+    snprintf(msg,50,"%d", thisMotion);
     if (value > 2) {
       myPublish(topic,msg);
     }
@@ -722,7 +740,7 @@ void loop() {
     if (value > 2) {
       if (voltage >= VOLTAGE_PS) {
          // on power supply
-         loopDelay = 3000;
+         loopDelay = 60000;
       } else if (voltage <= VOLTAGE_LOW) {
         sleepFor(280);
       } else {
