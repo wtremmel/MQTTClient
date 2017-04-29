@@ -9,8 +9,8 @@
  */
 
 #define ESP1 // Test Arbeitszimmer
-#define ESP2 // Kueche
-#define ESP2 // Loggia
+// #define ESP2 // Kueche
+// #define ESP2 // Loggia
 
 #if defined(ESP1)
 #define OUTDOOR 1
