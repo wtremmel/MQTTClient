@@ -10,19 +10,24 @@
 
 #define ESP1 // Test Arbeitszimmer
 // #define ESP2 // Kueche
-// #define ESP2 // Loggia
+// #define ESP3 // Garten
 
 #if defined(ESP1)
 #define OUTDOOR 1
 #define BME280ADDR 0x76
 #define DEBUG 1
+#define LS_FACTOR_M 0x02
+#define UVSENSOR 1
 #elif defined(ESP2)
 #define INDOOR 1
 #define NROFLEDS 10
-#define BME280ADDR 0x76
+#define BME280ADDR 0x77
+#define LS_FACTOR_M 0x01
 #elif defined(ESP3)
 #define OUTDOOR 1
 #define BME280ADDR 0x76
+#define LS_FACTOR_M 0x02
+#define DEBUG 1
 #endif
 
 #include <Arduino.h>
@@ -35,6 +40,13 @@
 
 #include <SparkFunBME280.h>
 #include <ESP8266HTTPClient.h>
+
+// UV-Sensor - just testing at the moment
+#ifdef UVSENSOR
+#include "Adafruit_VEML6070.h"
+Adafruit_VEML6070 uv = Adafruit_VEML6070();
+#endif
+
 
 //Pin defintions
 #define I2CSDA 4  //D2
@@ -350,6 +362,10 @@ void setup() {
   // setup sensor chip
   bme_setup();
 
+#ifdef UVSENSOR
+  uv.begin(VEML6070_1_T);
+#endif
+
   // setup PIR
 #ifdef MOTION
   pinMode(pirInput,INPUT);
@@ -567,7 +583,9 @@ void ls_setup() {
   // Config
   Wire.beginTransmission(LS_I2C_ADDR);
   Wire.write(0x80|LS_REG_CONFIG);
-  Wire.write(0x00); //M=1 T=400ms
+
+  Wire.write(LS_FACTOR_M - 1);
+  // Wire.write(0x00); //M=1 T=400ms
   // Wire.write(0x01); //M=2 T=200ms
   // Wire.write(0x02); //M=4 T=100ms
   Wire.endTransmission();
@@ -593,7 +611,8 @@ uint32_t ls_read() {
   h = Wire.read();
   while(Wire.available()){ Wire.read(); } //received more bytes?
   lux  = (h<<8) | (l<<0);
-  lux *= 1; //M=1
+  lux *= LS_FACTOR_M;
+  // lux *= 1; //M=1
   // lux *= 2; //M=2
   // lux *= 4; //M=4
 #ifdef DEBUG
@@ -709,6 +728,14 @@ void loop() {
     if (value > 2) {
       myPublish(topic,msg);
     }
+
+#ifdef UVSENSOR
+    snprintf(topic,50,"/%s/%s/UV/light", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg,50,"%u", uv.readUV());
+    if (value > 2) {
+      myPublish(topic,msg);
+    }
+#endif
 
     snprintf(topic,50,"/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%s",String(wetterSensor.readTempC(),2).c_str());
