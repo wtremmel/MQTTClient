@@ -1,4 +1,3 @@
-
 /**
  * MQTTCLient.ino
  * 
@@ -8,27 +7,55 @@
  *
  */
 
-#define ESP1 // Test Arbeitszimmer
+//#define ESP1 // Test Arbeitszimmer
 // #define ESP2 // Kueche
 // #define ESP3 // Garten
+#define ESP4 // Test
 
 #if defined(ESP1)
 #define OUTDOOR 1
 #define BME280ADDR 0x76
 #define DEBUG 1
 #define LS_FACTOR_M 0x02
+#define LSSENSOR
 #define UVSENSOR 1
+#define ADC 1
+#define REGEN 1
+#define REGEN_ADC 0
+
 #elif defined(ESP2)
 #define INDOOR 1
+#define MOTION
 #define NROFLEDS 10
 #define BME280ADDR 0x77
 #define LS_FACTOR_M 0x01
+
 #elif defined(ESP3)
 #define OUTDOOR 1
 #define BME280ADDR 0x76
 #define LS_FACTOR_M 0x02
 #define DEBUG 1
+
+#elif defined(ESP4)
+#define DEBUG 1
+#define INDOOR 1
+#define NROFLEDS 1
+#define TSL2561
+#define BME280ADDR 0x76
+#define LS_FACTOR_M 0x02
+#define LSSENSOR
+#define UVSENSOR 1
+#define ADC 1
+// #define REGEN 1
+// #define REGEN_ADC 0 // ADC-Pin 0 for rain detection
+// #define SOIL 1
+// #define SOIL_ADC 2 // ADC-Pin 2 for soil moisture
 #endif
+
+// 0x39
+// 0x48
+// 0x4a GY49 or MAX44009 Light Sensor
+
 
 #include <Arduino.h>
 
@@ -47,6 +74,18 @@
 Adafruit_VEML6070 uv = Adafruit_VEML6070();
 #endif
 
+// Light sensor TSL2561
+#ifdef TSL2561
+#include <SparkFunTSL2561.h>
+SFE_TSL2561 lightTSL2561;
+unsigned int msTSL2561;
+boolean gainTSL2561;
+#endif
+
+#ifdef ADC
+#include <Adafruit_ADS1015.h>
+Adafruit_ADS1115 ads;
+#endif
 
 //Pin defintions
 #define I2CSDA 4  //D2
@@ -54,8 +93,9 @@ Adafruit_VEML6070 uv = Adafruit_VEML6070();
 #define PIRINPUT 12
 #define BUZZER 13
 #define NEOPIXEL 14 //D5
+#define NIKONLED 2 // D4
 
-#ifdef INDOOR
+#ifdef NROFLEDS
 #include <Adafruit_NeoPixel.h>
 Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS,NEOPIXEL,NEO_GRB+NEO_KHZ800);
 #endif
@@ -267,6 +307,7 @@ void setup() {
     Serial.println(ESP.getResetInfo());
 #endif
 
+#ifdef OUTDOOR
   // before doing anything check if we have enough power
   voltage = ESP.getVcc();
   if (voltage <= VOLTAGE_MIN) {
@@ -277,6 +318,7 @@ void setup() {
     ESP.deepSleep(1000000*60*10); // Hibernate 10 minutes.
     delay(100);
   }
+#endif 
 
 #ifdef INDOOR
   led.begin();
@@ -357,7 +399,9 @@ void setup() {
   Wire.begin(I2CSDA,I2CSCL);
 
   // setup light chip
+#ifdef LSSENSOR
   ls_setup();
+#endif
   delay(10);
   // setup sensor chip
   bme_setup();
@@ -366,10 +410,36 @@ void setup() {
   uv.begin(VEML6070_1_T);
 #endif
 
+#ifdef TSL2561
+  lightTSL2561.begin();
+  #ifdef DEBUG
+  unsigned char ID;
+  if (lightTSL2561.getID(ID)) {
+    Serial.print("Got TSL2561 ID: 0x");
+    Serial.print(ID,HEX);
+    Serial.println(", should be 0x5x");
+  } else {
+    byte error = lightTSL2561.getError();
+    Serial.print("Got TSL2561 Error: ");
+    Serial.println(error);
+  }
+  #endif
+  lightTSL2561.setTiming(gainTSL2561,2,msTSL2561);
+  lightTSL2561.setPowerUp();
+#endif
+
   // setup PIR
 #ifdef MOTION
   pinMode(pirInput,INPUT);
   pirState = digitalRead(pirInput);
+#endif
+
+#ifdef ADC
+  ads.begin();
+#endif
+
+#ifdef NIKON
+  pinMode(NIKONLED,OUTPUT);
 #endif
 
   // setup the mqtt client
@@ -462,7 +532,12 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     }
     int b = in.substring(position).toInt();
     setled(n,r,g,b);
-  
+
+#ifdef NIKON
+  } else if (in.startsWith("nikon")) {
+    NIKONshoot();
+#endif
+
   // Location  
   } else if (in.startsWith("location ")) {
     int position=0;
@@ -549,6 +624,7 @@ boolean reconnect() {
   return client.connected();
 }
 
+#ifdef LSSENSOR
 /******************************************** Lichtsensor */
 #define LS_I2C_ADDR     0x29
 #define LS_REG_CONTROL  0x00
@@ -622,10 +698,12 @@ uint32_t ls_read() {
 
   return lux;
 }
+#endif
 
 /******************************************** Wettersensor */
 BME280 wetterSensor;
 void bme_setup() {
+#ifdef BME280ADDR
   wetterSensor.settings.commInterface = I2C_MODE;
   wetterSensor.settings.I2CAddress = BME280ADDR;
   wetterSensor.settings.runMode = 3;
@@ -642,7 +720,57 @@ void bme_setup() {
 #else
   wetterSensor.begin();
 #endif
+#endif
 }
+
+#ifdef REGEN
+/************** Regensensor */
+int16_t regen() {
+  int16_t rain;
+  rain = ads.readADC_SingleEnded(REGEN_ADC);
+#ifdef DEBUG
+  Serial.print("Regen: ");
+  Serial.println(rain);
+#endif
+  return rain;
+}
+#endif
+
+/************* Nikon Infrared Shoot Command */
+#ifdef NIKON
+void NIKONon(int pin, int time) {
+  static const int period = 25;
+  // found wait_time by measuring with oscilloscope
+  static const int wait_time = 9;
+
+  for (time = time/period; time > 0; time--) {
+    digitalWrite(pin, HIGH);
+    delayMicroseconds(wait_time);
+    digitalWrite(pin, LOW);
+    delayMicroseconds(wait_time);
+  }
+}
+
+
+void cameraSnap(int pin)
+{
+// These Timing are from: http://www.bigmike.it/ircontrol/
+NIKONon(pin,2000);
+//This Delay is broken into 3 lines because the delayMicroseconds() is only accurate to 16383. http://arduino.cc/en/Reference/DelayMicroseconds
+delayMicroseconds(7830);
+delayMicroseconds(10000);
+delayMicroseconds(10000);
+NIKONon(pin,390);
+delayMicroseconds(1580);
+NIKONon(pin,410);
+delayMicroseconds(3580);
+NIKONon(pin,400);
+}
+
+void NIKONshoot() {
+  cameraSnap(NIKONLED);
+}
+#endif
 
 unsigned long lastReconnectAttempt = 0;
 void myPublish(char *topic, char *msg) {
@@ -704,7 +832,7 @@ void loop() {
     Serial.println("Client disconnected");
   }
 #endif
-#ifdef INDOOR
+#ifdef MOTION
   thisMotion = digitalRead(pirInput);
 #else
   thisMotion = lastMotion;
@@ -723,11 +851,29 @@ void loop() {
     }
 #endif
 
+#ifdef LSSENSOR
     snprintf(topic,50,"/%s/%s/light", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%u", ls_read());
     if (value > 2) {
       myPublish(topic,msg);
     }
+#endif
+
+#ifdef TSL2561
+    unsigned int tsldata0,tsldata1;
+    if (lightTSL2561.getData(tsldata0,tsldata1)) {
+      double lux;
+      boolean good;
+      good = lightTSL2561.getLux(gainTSL2561,msTSL2561,tsldata0,tsldata1,lux);
+      if (good) {
+        snprintf(topic,50,"/%s/%s/light", Ssite.c_str(), Slocation.c_str());
+        snprintf(msg,50,"%u",(unsigned int) lux);
+        if (value > 2) {
+          myPublish(topic,msg);
+        }
+      }
+    }
+#endif
 
 #ifdef UVSENSOR
     snprintf(topic,50,"/%s/%s/UV/light", Ssite.c_str(), Slocation.c_str());
@@ -737,6 +883,16 @@ void loop() {
     }
 #endif
 
+#ifdef REGEN
+    snprintf(topic,50,"/%s/%s/rain", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg,50,"%u", regen());
+    if (value > 2) {
+      myPublish(topic,msg);
+    }
+
+#endif
+
+#ifdef BME280ADDR
     snprintf(topic,50,"/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%s",String(wetterSensor.readTempC(),2).c_str());
     if (value > 2) {
@@ -754,8 +910,8 @@ void loop() {
     if (value > 2) {
       myPublish(topic,msg);
     }
-
-#ifdef INDOOR
+#endif
+#ifdef MOTION
     lastMotion = thisMotion;
     snprintf(topic,50,"/%s/%s/motion", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%d", thisMotion);
