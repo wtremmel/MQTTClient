@@ -20,7 +20,6 @@
 #define LSSENSOR
 #define UVSENSOR 1
 #define ADC 1
-#define REGEN 1
 #define REGEN_ADC 0
 
 #elif defined(ESP2)
@@ -38,22 +37,20 @@
 
 #elif defined(ESP4)
 #define DEBUG 1
-#define INDOOR 1
+#define OUTDOOR 1
 #define NROFLEDS 1
 #define TSL2561
 #define BME280ADDR 0x76
 #define LS_FACTOR_M 0x02
-#define LSSENSOR
-#define UVSENSOR 1
 #define ADC 1
-// #define REGEN 1
-// #define REGEN_ADC 0 // ADC-Pin 0 for rain detection
+#define REGEN_ADC 0 // ADC-Pin 0 for rain detection
+#define SOIL_ADC 3 // ADC-Pin 3 for soil moisture
 // #define SOIL 1
 // #define SOIL_ADC 2 // ADC-Pin 2 for soil moisture
 #endif
 
-// 0x39
-// 0x48
+// 0x39 TSL2561
+// 0x48 4*AD converter
 // 0x4a GY49 or MAX44009 Light Sensor
 
 
@@ -213,21 +210,21 @@ String htmlSetupPage() {
 
 // led funtion. in case of not indoor it does nothing
 void setled(byte r, byte g, byte b) {
-#ifdef INDOOR
+#ifdef NROFLEDS
   led.setPixelColor(0,r,g,b);
   led.show();
 #endif
 }
 
 void setled(byte n, byte r, byte g, byte b) {
-#ifdef INDOOR
+#ifdef NROFLEDS
   led.setPixelColor(n,r,g,b);
   led.show();
 #endif
 }
 
 void setled(byte n, byte r, byte g, byte b, byte show) {
-#ifdef INDOOR
+#ifdef NROFLEDS
   led.setPixelColor(n,r,g,b);
   if (show) {
     led.show();
@@ -236,7 +233,7 @@ void setled(byte n, byte r, byte g, byte b, byte show) {
 }
 
 void setled(byte show) {
-#ifdef INDOOR
+#ifdef NROFLEDS
   if (!show) {
     int i;
     for (i=0;i<NROFLEDS;i++) {
@@ -320,7 +317,7 @@ void setup() {
   }
 #endif 
 
-#ifdef INDOOR
+#ifdef NROFLEDS
   led.begin();
   led.show();
 #endif
@@ -579,7 +576,9 @@ void callback(char* topic, byte* payload, unsigned int length)  {
 void sleepFor(unsigned seconds) {
 #ifdef OUTDOOR
   setled(0,0,0);
+#ifdef LSSENSOR
   ls_shutdown(); // shutdown light sensor
+#endif
   client.disconnect(); //disconnect from MQTT
   delay(100);
   WiFi.disconnect(); // disconnect from Wifi
@@ -723,7 +722,7 @@ void bme_setup() {
 #endif
 }
 
-#ifdef REGEN
+#ifdef REGEN_ADC
 /************** Regensensor */
 int16_t regen() {
   int16_t rain;
@@ -735,6 +734,20 @@ int16_t regen() {
   return rain;
 }
 #endif
+
+/**** Bodenfeuchte-Sensor */
+#ifdef SOIL_ADC
+int16_t soil() {
+  int16_t soil;
+  soil = ads.readADC_SingleEnded(SOIL_ADC);
+#ifdef DEBUG
+  Serial.print("Soil: ");
+  Serial.println(soil);
+#endif
+  return soil;
+}
+#endif
+
 
 /************* Nikon Infrared Shoot Command */
 #ifdef NIKON
@@ -883,14 +896,22 @@ void loop() {
     }
 #endif
 
-#ifdef REGEN
+#ifdef REGEN_ADC
     snprintf(topic,50,"/%s/%s/rain", Ssite.c_str(), Slocation.c_str());
     snprintf(msg,50,"%u", regen());
     if (value > 2) {
       myPublish(topic,msg);
     }
-
 #endif
+
+#ifdef SOIL_ADC
+    snprintf(topic,50,"/%s/%s/soil", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg,50,"%u", soil());
+    if (value > 2) {
+      myPublish(topic,msg);
+    }
+#endif
+
 
 #ifdef BME280ADDR
     snprintf(topic,50,"/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
