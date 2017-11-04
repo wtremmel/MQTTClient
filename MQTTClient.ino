@@ -1,26 +1,27 @@
 /**
- * MQTTCLient.ino
- * 
- * Reads light and weather sensors and publishes readings via mqtt
- *
- *  Created on: 25.3.2017
- *
- */
+   MQTTCLient.ino
 
-//#define ESP1 // Test Arbeitszimmer
+   Reads light and weather sensors and publishes readings via mqtt
+
+    Created on: 25.3.2017
+
+*/
+
+// #define ESP1 // Test Arbeitszimmer
 // #define ESP2 // Kueche
-// #define ESP3 // Garten
-#define ESP4 // Test
+#define ESP3 // Wohnzimmer
+// #define ESP4 // Garten
 
 #if defined(ESP1)
-#define OUTDOOR 1
+// #define OUTDOOR 1
+#define INDOOR 1
+#define NROFLEDS 1
 #define BME280ADDR 0x76
 #define DEBUG 1
 #define LS_FACTOR_M 0x02
-#define LSSENSOR
+#define LSSENSOR 1
 #define UVSENSOR 1
-#define ADC 1
-#define REGEN_ADC 0
+#define RAINCOUNTER 13
 
 #elif defined(ESP2)
 #define INDOOR 1
@@ -30,10 +31,12 @@
 #define LS_FACTOR_M 0x01
 
 #elif defined(ESP3)
-#define OUTDOOR 1
+#define INDOOR 1
 #define BME280ADDR 0x76
+#define LSSENSOR
 #define LS_FACTOR_M 0x02
 #define DEBUG 1
+#define NROFLEDS 1
 
 #elif defined(ESP4)
 #define DEBUG 1
@@ -44,9 +47,7 @@
 #define LS_FACTOR_M 0x02
 #define ADC 1
 #define REGEN_ADC 0 // ADC-Pin 0 for rain detection
-#define SOIL_ADC 3 // ADC-Pin 3 for soil moisture
-// #define SOIL 1
-// #define SOIL_ADC 2 // ADC-Pin 2 for soil moisture
+// #define SOIL_ADC 3 // ADC-Pin 3 for soil moisture
 #endif
 
 // 0x39 TSL2561
@@ -89,20 +90,21 @@ Adafruit_ADS1115 ads;
 #define I2CSCL 5  //D1
 #define PIRINPUT 12
 #define BUZZER 13
+// Regenzaehler 13
 #define NEOPIXEL 14 //D5
 #define NIKONLED 2 // D4
 
 #ifdef NROFLEDS
 #include <Adafruit_NeoPixel.h>
-Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS,NEOPIXEL,NEO_GRB+NEO_KHZ800);
+Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS, NEOPIXEL, NEO_GRB + NEO_KHZ800);
 #endif
 
 // Voltage when on power supply
 #define VOLTAGE_PS 2700
 // Go to longer intervals
-#define VOLTAGE_LOW 2030
+#define VOLTAGE_LOW 2040
 // Minimum volate for operation
-#define VOLTAGE_MIN 2010
+#define VOLTAGE_MIN 2000
 
 // Run modes
 #define RM_START 1
@@ -122,14 +124,12 @@ const char *fn_location = "/location";
 
 String Smyname, Spass, Sssid, Smqttserver, Ssite, Slocation;
 
-// Webserver for status and config
-WiFiServer server(80);
+// Web for status and config
+// WiFiServer server(80);
 WiFiClient espClient, webClient;
 PubSubClient client;
 // experimental
 WiFiEventHandler disconnectedEventHandler;
-
-
 
 long lastMsg = 0;
 char msg[50];
@@ -147,7 +147,7 @@ unsigned int voltage;
 String readFromFile(const char *filename, String s) {
   s = "";
   if (SPIFFS.exists(filename)) {
-    File f = SPIFFS.open(filename,"r");
+    File f = SPIFFS.open(filename, "r");
     if (!f) {
       s = "";
     } else {
@@ -171,39 +171,39 @@ String writeFile(const char *filename, String s) {
 
 String htmlTableRow(String s1, String s2) {
   String sRow =
-  String("<tr><td>" + s1 + "</td><td>" + s2 + "</td></tr>\n");
+    String("<tr><td>" + s1 + "</td><td>" + s2 + "</td></tr>\n");
   return sRow;
 }
 
 String htmlInput(const char* id, String s) {
   String sIn =
-  String("<input id=\"" + String(id) + "\" value=\"" + s + "\">");
+    String("<input id=\"" + String(id) + "\" value=\"" + s + "\">");
   return sIn;
 }
 
 String htmlSetupPage() {
   String htmlPage =
-  String("HTTP/1.1 200 OK\r\n") +
-            "Content-Type: text/html\r\n" +
-            "Connection: close\r\n" +  // the connection will be closed after completion of the response
-            "\r\n" +
-            "<!DOCTYPE HTML>" +
-            "<html>" +
-            "<h1>"+ Smyname + "</h1>" +
-            "<hr>" +
-            "<form method=\"post\">" +
-            "<table>" +
-              htmlTableRow(String("Hostname:"),htmlInput(fn_myname,Smyname)) +
-              htmlTableRow(String("Site name:"),htmlInput(fn_site,Ssite)) +
-              htmlTableRow(String("Location:"), htmlInput(fn_location,Slocation)) +
-              htmlTableRow(String("Wifi SSID:"),htmlInput(fn_ssid,Sssid)) +
-              // htmlTableRow(String("Password:"),Spass) +
-              htmlTableRow(String("MQTT Server:"),htmlInput(fn_mqttserver,Smqttserver)) +
-              htmlTableRow(String("<button type=\"submit\">Submit</button>"),String("")) +
-            "</table>" +
-            "</form>" +
-            "</html>" +
-            "\r\n";
+    String("HTTP/1.1 200 OK\r\n") +
+    "Content-Type: text/html\r\n" +
+    "Connection: close\r\n" +  // the connection will be closed after completion of the response
+    "\r\n" +
+    "<!DOCTYPE HTML>" +
+    "<html>" +
+    "<h1>" + Smyname + "</h1>" +
+    "<hr>" +
+    "<form method=\"post\">" +
+    "<table>" +
+    htmlTableRow(String("Hostname:"), htmlInput(fn_myname, Smyname)) +
+    htmlTableRow(String("Site name:"), htmlInput(fn_site, Ssite)) +
+    htmlTableRow(String("Location:"), htmlInput(fn_location, Slocation)) +
+    htmlTableRow(String("Wifi SSID:"), htmlInput(fn_ssid, Sssid)) +
+    // htmlTableRow(String("Password:"),Spass) +
+    htmlTableRow(String("MQTT Server:"), htmlInput(fn_mqttserver, Smqttserver)) +
+    htmlTableRow(String("<button type=\"submit\">Submit</button>"), String("")) +
+    "</table>" +
+    "</form>" +
+    "</html>" +
+    "\r\n";
   return htmlPage;
 
 }
@@ -211,21 +211,21 @@ String htmlSetupPage() {
 // led funtion. in case of not indoor it does nothing
 void setled(byte r, byte g, byte b) {
 #ifdef NROFLEDS
-  led.setPixelColor(0,r,g,b);
+  led.setPixelColor(0, r, g, b);
   led.show();
 #endif
 }
 
 void setled(byte n, byte r, byte g, byte b) {
 #ifdef NROFLEDS
-  led.setPixelColor(n,r,g,b);
+  led.setPixelColor(n, r, g, b);
   led.show();
 #endif
 }
 
 void setled(byte n, byte r, byte g, byte b, byte show) {
 #ifdef NROFLEDS
-  led.setPixelColor(n,r,g,b);
+  led.setPixelColor(n, r, g, b);
   if (show) {
     led.show();
   }
@@ -236,8 +236,8 @@ void setled(byte show) {
 #ifdef NROFLEDS
   if (!show) {
     int i;
-    for (i=0;i<NROFLEDS;i++) {
-      setled(i,0,0,0,0);
+    for (i = 0; i < NROFLEDS; i++) {
+      setled(i, 0, 0, 0, 0);
     }
   }
   led.show();
@@ -253,37 +253,37 @@ void printConfig() {
   Serial.print("=");
   Serial.print(Smyname);
   Serial.print(" / ");
-  Serial.println(readFromFile(fn_myname,s));
-  
+  Serial.println(readFromFile(fn_myname, s));
+
   Serial.print(fn_ssid);
   Serial.print("=");
   Serial.print(Sssid);
   Serial.print(" / ");
-  Serial.println(readFromFile(fn_ssid,s));
-  
+  Serial.println(readFromFile(fn_ssid, s));
+
   Serial.print(fn_pass);
   Serial.print("=");
   Serial.print(Spass);
   Serial.print(" / ");
-  Serial.println(readFromFile(fn_pass,s));
-  
+  Serial.println(readFromFile(fn_pass, s));
+
   Serial.print(fn_site);
   Serial.print("=");
   Serial.print(Ssite);
   Serial.print(" / ");
-  Serial.println(readFromFile(fn_site,s));
-  
+  Serial.println(readFromFile(fn_site, s));
+
   Serial.print(fn_location);
   Serial.print("=");
   Serial.print(Slocation);
   Serial.print(" / ");
-  Serial.println(readFromFile(fn_location,s));
-  
+  Serial.println(readFromFile(fn_location, s));
+
   Serial.print(fn_mqttserver);
   Serial.print("=");
   Serial.println(Smqttserver);
   Serial.print(" / ");
-  Serial.println(readFromFile(fn_mqttserver,s));
+  Serial.println(readFromFile(fn_mqttserver, s));
 
 #endif
 }
@@ -291,48 +291,56 @@ void printConfig() {
 void setup() {
 
 #ifdef DEBUG
-    Serial.begin(115200);
-   // USE_SERIAL.setDebugOutput(true);
-    Serial.println("\nStarting");
-    Serial.print("Sleep mode:");
-    Serial.println(WiFi.getSleepMode());
-    Serial.print("Phy mode:");
-    Serial.println(WiFi.getPhyMode());
-    Serial.print("Reset reason:");
-    Serial.println(ESP.getResetReason());
-    Serial.print("Reset info:");
-    Serial.println(ESP.getResetInfo());
+  Serial.begin(115200);
+  // USE_SERIAL.setDebugOutput(true);
+  Serial.println("\nStarting");
+  Serial.print("Sleep mode:");
+  Serial.println(WiFi.getSleepMode());
+  Serial.print("Phy mode:");
+  Serial.println(WiFi.getPhyMode());
+  Serial.print("Wifi mode:");
+  Serial.println(WiFi.getMode());
+  Serial.print("Reset reason:");
+  Serial.println(ESP.getResetReason());
+  Serial.print("Reset info:");
+  Serial.println(ESP.getResetInfo());
 #endif
 
+  // Rain counter starts very early
+#ifdef RAINCOUNTER
+  pinMode(RAINCOUNTER, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(RAINCOUNTER), countRaindrops, FALLING);
+#endif
+
+  voltage = ESP.getVcc();
 #ifdef OUTDOOR
   // before doing anything check if we have enough power
-  voltage = ESP.getVcc();
   if (voltage <= VOLTAGE_MIN) {
 #ifdef DEBUG
     Serial.print("Voltage below minimum: ");
     Serial.println(voltage);
 #endif
-    ESP.deepSleep(1000000*60*10); // Hibernate 10 minutes.
+    ESP.deepSleep(1000000 * 60 * 10); // Hibernate 10 minutes.
     delay(100);
   }
-#endif 
+#endif
 
 #ifdef NROFLEDS
   led.begin();
   led.show();
 #endif
 
-  setled(255,0,0);
+  setled(255, 0, 0);
   // setup filesystem
   SPIFFS.begin();
 
   // read configs from files
-  Smyname = readFromFile(fn_myname,Smyname);
-  Sssid = readFromFile(fn_ssid,Sssid);
-  Spass = readFromFile(fn_pass,Spass);
-  Smqttserver = readFromFile(fn_mqttserver,Smqttserver);
-  Ssite = readFromFile(fn_site,Ssite);
-  Slocation = readFromFile(fn_location,Slocation);
+  Smyname = readFromFile(fn_myname, Smyname);
+  Sssid = readFromFile(fn_ssid, Sssid);
+  Spass = readFromFile(fn_pass, Spass);
+  Smqttserver = readFromFile(fn_mqttserver, Smqttserver);
+  Ssite = readFromFile(fn_site, Ssite);
+  Slocation = readFromFile(fn_location, Slocation);
 
 #ifdef DEBUG
   printConfig();
@@ -342,21 +350,22 @@ void setup() {
   WiFi.hostname(Smyname);
   WiFi.disconnect();
   delay(100);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(Sssid.c_str(), Spass.c_str());
-  
+
 #ifdef DEBUG
   Serial.print("Connecting to ");
   Serial.println(Sssid);
 #endif
 
-  setled(255,128,0);
+  setled(255, 128, 0);
   int retries = 0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     retries++;
-    #ifdef DEBUG
+#ifdef DEBUG
     Serial.print(".");
-    #endif
+#endif
     if (retries > 100) {
       // no connection after lot of retries
       runMode |= RM_CONFIG;
@@ -364,7 +373,8 @@ void setup() {
     }
   }
 
-  setled(0,255,0);
+  setled(0, 255, 0);
+  delay(100);
 
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -382,18 +392,18 @@ void setup() {
 
 #ifdef UNDEF
   if (MDNS.begin(Smyname.c_str())) {
-    MDNS.addService("http","tcp",80);
+    MDNS.addService("http", "tcp", 80);
     Serial.println("mDNS responder started");
   } else {
     Serial.println("Error starting mDNS");
   }
 #endif
 
-  // start webserver
-  server.begin();
+  // start webserver - no we do not
+  // server.begin();
 
   // setup i2c
-  Wire.begin(I2CSDA,I2CSCL);
+  Wire.begin(I2CSDA, I2CSCL);
 
   // setup light chip
 #ifdef LSSENSOR
@@ -409,25 +419,25 @@ void setup() {
 
 #ifdef TSL2561
   lightTSL2561.begin();
-  #ifdef DEBUG
+#ifdef DEBUG
   unsigned char ID;
   if (lightTSL2561.getID(ID)) {
     Serial.print("Got TSL2561 ID: 0x");
-    Serial.print(ID,HEX);
+    Serial.print(ID, HEX);
     Serial.println(", should be 0x5x");
   } else {
     byte error = lightTSL2561.getError();
     Serial.print("Got TSL2561 Error: ");
     Serial.println(error);
   }
-  #endif
-  lightTSL2561.setTiming(gainTSL2561,2,msTSL2561);
+#endif
+  lightTSL2561.setTiming(gainTSL2561, 2, msTSL2561);
   lightTSL2561.setPowerUp();
 #endif
 
   // setup PIR
 #ifdef MOTION
-  pinMode(pirInput,INPUT);
+  pinMode(pirInput, INPUT);
   pirState = digitalRead(pirInput);
 #endif
 
@@ -436,7 +446,7 @@ void setup() {
 #endif
 
 #ifdef NIKON
-  pinMode(NIKONLED,OUTPUT);
+  pinMode(NIKONLED, OUTPUT);
 #endif
 
   // setup the mqtt client
@@ -444,11 +454,11 @@ void setup() {
   client.setServer(Smqttserver.c_str(), 1883);
   client.setCallback(callback);
 
-  setled(0,0,0);
+  setled(0, 0, 0);
 }
 
 void callback(char* topic, byte* payload, unsigned int length)  {
-  #ifdef DEBUG
+#ifdef DEBUG
   Serial.print("Message arrived[");
   Serial.print(topic);
   Serial.print("]: ");
@@ -456,126 +466,126 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     Serial.print((char)payload[i]);
   }
   Serial.println();
-  #endif
-  
+#endif
+
   String in;
   for (int i = 0; i < length; i++) {
     in += String((char)payload[i]);
   }
-  
+
   if (in.equals(String("reboot"))) {
     ESP.restart();
   } else if (in.equals(String("sleep"))) {
     sleepFor(60);
   } else if (in.startsWith("led ")) {
-    int position=0;
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
     int r = in.substring(position).toInt();
     position++;
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
     int g = in.substring(position).toInt();
     position++;
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
     int b = in.substring(position).toInt();
-    setled(r,g,b);
-  } 
+    setled(r, g, b);
+  }
 
   // LEDs off
   else if (in.startsWith("ledsoff")) {
     setled(0);
   }
-  
+
   // LED code in binary
   else if (in.startsWith("ledb ")) {
-    int position=0;
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
     byte thisLED = 0;
     position++;
-    while (position+2 < length) {
-      setled(thisLED, payload[position+0],payload[position+1],payload[position+2],0);
-      position+=3;
+    while (position + 2 < length) {
+      setled(thisLED, payload[position + 0], payload[position + 1], payload[position + 2], 0);
+      position += 3;
       thisLED++;
     }
     setled(1);
   }
   else if (in.startsWith("ledn ")) {
-    int position=0;
+    int position = 0;
 
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
     int n = in.substring(position).toInt();
     position++;
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
     int r = in.substring(position).toInt();
     position++;
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
     int g = in.substring(position).toInt();
     position++;
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
     int b = in.substring(position).toInt();
-    setled(n,r,g,b);
+    setled(n, r, g, b);
 
 #ifdef NIKON
   } else if (in.startsWith("nikon")) {
     NIKONshoot();
 #endif
 
-  // Location  
+    // Location
   } else if (in.startsWith("location ")) {
-    int position=0;
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
-    writeFile(fn_location,in.substring(position+1));
+    writeFile(fn_location, in.substring(position + 1));
     printConfig();
   }
 
   // Mqttserver
   else if (in.startsWith("mqttserver ")) {
-    int position=0;
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
-    writeFile(fn_mqttserver,in.substring(position+1));
+    writeFile(fn_mqttserver, in.substring(position + 1));
     printConfig();
   }
 
   // Site
   else if (in.startsWith("site ")) {
-    int position=0;
-    while (in.substring(position,position+1) != " " && position < in.length()){
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
       position++;
     }
-    writeFile(fn_site,in.substring(position+1));
+    writeFile(fn_site, in.substring(position + 1));
     printConfig();
   }
 
-  
-  else { 
-    #ifdef DEBUG
+
+  else {
+#ifdef DEBUG
     Serial.println("unknown command received: " + in);
-    #endif
+#endif
   }
 }
 
 void sleepFor(unsigned seconds) {
 #ifdef OUTDOOR
-  setled(0,0,0);
+  setled(0, 0, 0);
 #ifdef LSSENSOR
   ls_shutdown(); // shutdown light sensor
 #endif
@@ -583,7 +593,7 @@ void sleepFor(unsigned seconds) {
   delay(100);
   WiFi.disconnect(); // disconnect from Wifi
   delay(200);
-  ESP.deepSleep(1000000*seconds);
+  ESP.deepSleep(1000000 * seconds);
   delay(100);
 #endif
 }
@@ -591,7 +601,7 @@ void sleepFor(unsigned seconds) {
 boolean reconnect() {
   // Loop until we're reconnected
   char mytopic[50];
-  snprintf(mytopic,50,"/%s/%s/status",Ssite.c_str(),Smyname.c_str());
+  snprintf(mytopic, 50, "/%s/%s/status", Ssite.c_str(), Smyname.c_str());
 
 
 
@@ -607,8 +617,8 @@ boolean reconnect() {
     Serial.println("connected");
 #endif
     // Once connected, publish an announcement...
-      
-    client.publish(mytopic,"started");
+
+    client.publish(mytopic, "started");
     delay(10);
     // ... and resubscribe to my name
     client.subscribe(Smyname.c_str());
@@ -635,7 +645,7 @@ boolean reconnect() {
 void ls_setup() {
 #ifdef DEBUG
   Wire.beginTransmission(LS_I2C_ADDR);
-  Wire.write(0x80|LS_REG_ID);
+  Wire.write(0x80 | LS_REG_ID);
   Wire.endTransmission();
 
   Serial.print("LS ID: ");
@@ -650,14 +660,14 @@ void ls_setup() {
   delay(100);
   // Power on
   Wire.beginTransmission(LS_I2C_ADDR);
-  Wire.write(0x80|LS_REG_CONTROL);
+  Wire.write(0x80 | LS_REG_CONTROL);
   Wire.write(0x03); //power on
   Wire.endTransmission();
   delay(100);
 
   // Config
   Wire.beginTransmission(LS_I2C_ADDR);
-  Wire.write(0x80|LS_REG_CONFIG);
+  Wire.write(0x80 | LS_REG_CONFIG);
 
   Wire.write(LS_FACTOR_M - 1);
   // Wire.write(0x00); //M=1 T=400ms
@@ -669,23 +679,25 @@ void ls_setup() {
 void ls_shutdown() {
   // Power off
   Wire.beginTransmission(LS_I2C_ADDR);
-  Wire.write(0x80|LS_REG_CONTROL);
+  Wire.write(0x80 | LS_REG_CONTROL);
   Wire.write(0x00); //power on
   Wire.endTransmission();
 }
 
 uint32_t ls_read() {
-  uint16_t l,h;
+  uint16_t l, h;
   uint32_t lux;
 
   Wire.beginTransmission(LS_I2C_ADDR);
-  Wire.write(0x80|LS_REG_DATALOW);
+  Wire.write(0x80 | LS_REG_DATALOW);
   Wire.endTransmission();
   Wire.requestFrom(LS_I2C_ADDR, 2); //request 2 bytes
   l = Wire.read();
   h = Wire.read();
-  while(Wire.available()){ Wire.read(); } //received more bytes?
-  lux  = (h<<8) | (l<<0);
+  while (Wire.available()) {
+    Wire.read();  //received more bytes?
+  }
+  lux  = (h << 8) | (l << 0);
   lux *= LS_FACTOR_M;
   // lux *= 1; //M=1
   // lux *= 2; //M=2
@@ -722,6 +734,14 @@ void bme_setup() {
 #endif
 }
 
+/******************** Regenzaehler */
+#ifdef RAINCOUNTER
+volatile unsigned long int raincounter = 0;
+void countRaindrops() {
+  ++raincounter;
+}
+#endif
+
 #ifdef REGEN_ADC
 /************** Regensensor */
 int16_t regen() {
@@ -756,7 +776,7 @@ void NIKONon(int pin, int time) {
   // found wait_time by measuring with oscilloscope
   static const int wait_time = 9;
 
-  for (time = time/period; time > 0; time--) {
+  for (time = time / period; time > 0; time--) {
     digitalWrite(pin, HIGH);
     delayMicroseconds(wait_time);
     digitalWrite(pin, LOW);
@@ -767,17 +787,17 @@ void NIKONon(int pin, int time) {
 
 void cameraSnap(int pin)
 {
-// These Timing are from: http://www.bigmike.it/ircontrol/
-NIKONon(pin,2000);
-//This Delay is broken into 3 lines because the delayMicroseconds() is only accurate to 16383. http://arduino.cc/en/Reference/DelayMicroseconds
-delayMicroseconds(7830);
-delayMicroseconds(10000);
-delayMicroseconds(10000);
-NIKONon(pin,390);
-delayMicroseconds(1580);
-NIKONon(pin,410);
-delayMicroseconds(3580);
-NIKONon(pin,400);
+  // These Timing are from: http://www.bigmike.it/ircontrol/
+  NIKONon(pin, 2000);
+  //This Delay is broken into 3 lines because the delayMicroseconds() is only accurate to 16383. http://arduino.cc/en/Reference/DelayMicroseconds
+  delayMicroseconds(7830);
+  delayMicroseconds(10000);
+  delayMicroseconds(10000);
+  NIKONon(pin, 390);
+  delayMicroseconds(1580);
+  NIKONon(pin, 410);
+  delayMicroseconds(3580);
+  NIKONon(pin, 400);
 }
 
 void NIKONshoot() {
@@ -803,7 +823,7 @@ void myPublish(char *topic, char *msg) {
   Serial.print(" ");
   Serial.println(msg);
 #endif
-  client.publish(topic,msg);
+  client.publish(topic, msg);
 }
 
 
@@ -811,7 +831,7 @@ unsigned int loopDelay = 2000;
 int lastMotion = 0, thisMotion = 0;
 
 void loop() {
-  
+
   if (!client.connected()) {
     long now = millis();
     if (now - lastReconnectAttempt > 5000) {
@@ -822,12 +842,12 @@ void loop() {
     }
   }
   client.loop();
-  
+
+#ifdef UNDEF
   if (runMode & RM_CONFIG) {
     webClient = server.available();
   }
 
-#ifdef UNDEF
   if (webClient) {
     Serial.println("Webclient connected");
     while (webClient.connected()) {
@@ -857,103 +877,113 @@ void loop() {
 
 #ifdef OUTDOOR
     voltage = ESP.getVcc();
-    snprintf(topic,50,"/%s/%s/voltage", Ssite.c_str(), Smyname.c_str());
-    snprintf(msg,50,"%s",String(voltage / 1000.0,3).c_str());
+    snprintf(topic, 50, "/%s/%s/voltage", Ssite.c_str(), Smyname.c_str());
+    snprintf(msg, 50, "%s", String(voltage / 1000.0, 3).c_str());
     if (value > 2) {
-      myPublish(topic,msg);
+      myPublish(topic, msg);
     }
 #endif
 
 #ifdef LSSENSOR
-    snprintf(topic,50,"/%s/%s/light", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg,50,"%u", ls_read());
+    snprintf(topic, 50, "/%s/%s/light", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%u", ls_read());
     if (value > 2) {
-      myPublish(topic,msg);
+      myPublish(topic, msg);
     }
 #endif
 
 #ifdef TSL2561
-    unsigned int tsldata0,tsldata1;
-    if (lightTSL2561.getData(tsldata0,tsldata1)) {
+    unsigned int tsldata0, tsldata1;
+    if (lightTSL2561.getData(tsldata0, tsldata1)) {
       double lux;
       boolean good;
-      good = lightTSL2561.getLux(gainTSL2561,msTSL2561,tsldata0,tsldata1,lux);
+      good = lightTSL2561.getLux(gainTSL2561, msTSL2561, tsldata0, tsldata1, lux);
       if (good) {
-        snprintf(topic,50,"/%s/%s/light", Ssite.c_str(), Slocation.c_str());
-        snprintf(msg,50,"%u",(unsigned int) lux);
+        snprintf(topic, 50, "/%s/%s/light", Ssite.c_str(), Slocation.c_str());
+        snprintf(msg, 50, "%u", (unsigned int) lux);
         if (value > 2) {
-          myPublish(topic,msg);
+          myPublish(topic, msg);
         }
       }
     }
 #endif
 
 #ifdef UVSENSOR
-    snprintf(topic,50,"/%s/%s/UV/light", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg,50,"%u", uv.readUV());
+    snprintf(topic, 50, "/%s/%s/UV/light", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%u", uv.readUV());
     if (value > 2) {
-      myPublish(topic,msg);
+      myPublish(topic, msg);
     }
 #endif
 
 #ifdef REGEN_ADC
-    snprintf(topic,50,"/%s/%s/rain", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg,50,"%u", regen());
+    snprintf(topic, 50, "/%s/%s/rain", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%u", regen());
     if (value > 2) {
-      myPublish(topic,msg);
+      myPublish(topic, msg);
     }
 #endif
 
-#ifdef SOIL_ADC
-    snprintf(topic,50,"/%s/%s/soil", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg,50,"%u", soil());
+#ifdef RAINCOUNTER
+    snprintf(topic, 50, "/%s/%s/raindrops", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%u", raincounter);
     if (value > 2) {
-      myPublish(topic,msg);
+      myPublish(topic, msg);
+      raincounter = 0;
+    }
+#endif
+
+
+#ifdef SOIL_ADC
+    snprintf(topic, 50, "/%s/%s/soil", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%u", soil());
+    if (value > 2) {
+      myPublish(topic, msg);
     }
 #endif
 
 
 #ifdef BME280ADDR
-    snprintf(topic,50,"/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg,50,"%s",String(wetterSensor.readTempC(),2).c_str());
+    snprintf(topic, 50, "/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%s", String(wetterSensor.readTempC(), 2).c_str());
     if (value > 2) {
-      myPublish(topic,msg);
+      myPublish(topic, msg);
     }
 
-    snprintf(topic,50,"/%s/%s/airpressure", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg,50,"%s",String(wetterSensor.readFloatPressure()/100,2).c_str());
+    snprintf(topic, 50, "/%s/%s/airpressure", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%s", String(wetterSensor.readFloatPressure() / 100, 2).c_str());
     if (value > 2) {
-      myPublish(topic,msg);
+      myPublish(topic, msg);
     }
 
-    snprintf(topic,50,"/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg,50,"%s",String(wetterSensor.readFloatHumidity(),2).c_str());
+    snprintf(topic, 50, "/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%s", String(wetterSensor.readFloatHumidity(), 2).c_str());
     if (value > 2) {
-      myPublish(topic,msg);
+      myPublish(topic, msg);
     }
 #endif
 #ifdef MOTION
     lastMotion = thisMotion;
-    snprintf(topic,50,"/%s/%s/motion", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg,50,"%d", thisMotion);
+    snprintf(topic, 50, "/%s/%s/motion", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%d", thisMotion);
     if (value > 2) {
-      myPublish(topic,msg);
+      myPublish(topic, msg);
     }
 #endif
 
     if (value > 2) {
       if (voltage >= VOLTAGE_PS) {
-         // on power supply
-         loopDelay = 60000;
+        // on power supply
+        loopDelay = 60000;
       } else if (voltage <= VOLTAGE_LOW) {
-        sleepFor(280);
+        sleepFor(8 * 60);
       } else {
         // on battery, standard voltage
-        sleepFor(3*60);
+        sleepFor(4 * 60);
       }
-      
+
     } else {
-      
+
     }
   }
 }
