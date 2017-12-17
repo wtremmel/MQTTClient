@@ -9,19 +9,24 @@
 
 // #define ESP1 // Test Arbeitszimmer
 // #define ESP2 // Kueche
-#define ESP3 // Wohnzimmer
+// #define ESP3 // Wohnzimmer
 // #define ESP4 // Garten
+// #define ESP6 // mit Lithium-Akku
+#define ESP7  // Hausanschlussraum
 
 #if defined(ESP1)
 // #define OUTDOOR 1
 #define INDOOR 1
 #define NROFLEDS 1
+// #define VOLTAGE_PS 
 #define BME280ADDR 0x76
 #define DEBUG 1
-#define LS_FACTOR_M 0x02
-#define LSSENSOR 1
-#define UVSENSOR 1
-#define RAINCOUNTER 13
+// #define LS_FACTOR_M 0x02
+// #define LSSENSOR 1
+// #define UVSENSOR 1
+// #define RAINCOUNTER 13
+// Voltage when on power supply
+#define VOLTAGE_PS 3000
 
 #elif defined(ESP2)
 #define INDOOR 1
@@ -29,6 +34,8 @@
 #define NROFLEDS 10
 #define BME280ADDR 0x77
 #define LS_FACTOR_M 0x01
+// Voltage when on power supply
+#define VOLTAGE_PS 2700
 
 #elif defined(ESP3)
 #define INDOOR 1
@@ -37,6 +44,8 @@
 #define LS_FACTOR_M 0x02
 #define DEBUG 1
 #define NROFLEDS 1
+// Voltage when on power supply
+#define VOLTAGE_PS 2700
 
 #elif defined(ESP4)
 #define DEBUG 1
@@ -48,6 +57,17 @@
 #define ADC 1
 #define REGEN_ADC 0 // ADC-Pin 0 for rain detection
 // #define SOIL_ADC 3 // ADC-Pin 3 for soil moisture
+// Voltage when on power supply
+#define VOLTAGE_PS 2600
+
+#elif defined(ESP7) 
+// Indoor with GY49 light sensor
+#define INDOOR 1
+#define VOLTAGE_PS 3000
+#define NROFLEDS 1
+#define BME280ADDR 0x76
+#define DEBUG 1
+#define GY49 0x4a
 #endif
 
 // 0x39 TSL2561
@@ -80,16 +100,17 @@ unsigned int msTSL2561;
 boolean gainTSL2561;
 #endif
 
+
 #ifdef ADC
 #include <Adafruit_ADS1015.h>
 Adafruit_ADS1115 ads;
 #endif
 
 //Pin defintions
-#define I2CSDA 4  //D2
-#define I2CSCL 5  //D1
-#define PIRINPUT 12
-#define BUZZER 13
+#define I2CSDA 4  //D2 gruen
+#define I2CSCL 5  //D1 gelb
+#define PIRINPUT 12 //D6
+#define BUZZER 13 //D7
 // Regenzaehler 13
 #define NEOPIXEL 14 //D5
 #define NIKONLED 2 // D4
@@ -99,8 +120,7 @@ Adafruit_ADS1115 ads;
 Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS, NEOPIXEL, NEO_GRB + NEO_KHZ800);
 #endif
 
-// Voltage when on power supply
-#define VOLTAGE_PS 2700
+
 // Go to longer intervals
 #define VOLTAGE_LOW 2040
 // Minimum volate for operation
@@ -313,6 +333,7 @@ void setup() {
 #endif
 
   voltage = ESP.getVcc();
+
 #ifdef OUTDOOR
   // before doing anything check if we have enough power
   if (voltage <= VOLTAGE_MIN) {
@@ -347,10 +368,10 @@ void setup() {
 #endif
 
   WiFi.persistent(false);
-  WiFi.hostname(Smyname);
   WiFi.disconnect();
   delay(100);
   WiFi.mode(WIFI_STA);
+  WiFi.hostname(Smyname);
   WiFi.begin(Sssid.c_str(), Spass.c_str());
 
 #ifdef DEBUG
@@ -433,6 +454,14 @@ void setup() {
 #endif
   lightTSL2561.setTiming(gainTSL2561, 2, msTSL2561);
   lightTSL2561.setPowerUp();
+#endif
+
+// GY49 Light Sensor
+#ifdef GY49
+  Wire.beginTransmission(GY49);
+  Wire.write(0x02);
+  Wire.write(0x40);
+  Wire.endTransmission();
 #endif
 
   // setup PIR
@@ -905,6 +934,31 @@ void loop() {
           myPublish(topic, msg);
         }
       }
+    }
+#endif
+
+#ifdef GY49
+    unsigned int gydata[2];
+    Wire.beginTransmission(GY49);
+    Wire.write(0x03);
+    Wire.endTransmission();
+    Wire.requestFrom(GY49,2);
+    if (Wire.available() == 2) {
+      gydata[0] = Wire.read();
+      gydata[1] = Wire.read();
+      int exponent =  (gydata[0] & 0xf0) >> 4;
+      int mantissa = ((gydata[0] & 0x0f) << 4) | (gydata[1] & 0x0f);
+      float luminance = (float)pow(2,exponent) * (float)mantissa * 0.045;
+    
+      snprintf(topic, 50, "/%s/%s/light", Ssite.c_str(), Slocation.c_str());
+      snprintf(msg, 50, "%s", String(luminance, 2).c_str());
+      if (value > 2) { 
+        myPublish(topic, msg);
+      }
+    } else {
+#ifdef DEBUG
+      Serial.println("Error: GY49 no data");
+#endif
     }
 #endif
 
