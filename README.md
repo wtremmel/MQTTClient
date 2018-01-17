@@ -20,8 +20,10 @@ ESP8266 MQTT Client for sensor reading
 * 3.3V voltage regulator (to prevent battery discharge via the regulator)
 
 # Soldering
+PIR is not used in this example. Because I made a mistake with the PCB board, you must solder a wire from the D1mini GND pin to the GND pin of the sensors.
+
 1. First solder the pin headers ![Pin Headers](pictures/wt-mqttclient-14.jpg)
-2. Next plug in the D1mini including the male pin headers and solder the male pin headers to the D1mini from the top
+2. Next plug in the D1mini including the male pin headers and solder the male pin headers to the D1mini from the top ![D1mini](pictures/wt-mqttclient-12.jpg)
 3. Do the same with the two sensors ![Sensors](pictures/wt-mqttclient-15.jpg)
 4. Depending on what type of LED you have solder the LED ![LED](pictures/wt-mqttclient-16.jpg)
 5. Finished module ![Complete](pictures/wt-mqttclient-17.jpg)
