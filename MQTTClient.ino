@@ -7,12 +7,19 @@
 
 */
 
+// Go to longer intervals
+#define VOLTAGE_LOW 2040
+// Minimum volate for operation
+#define VOLTAGE_MIN 1900
+
 // #define ESP1 // Test Arbeitszimmer
 // #define ESP2 // Kueche
 // #define ESP3 // Wohnzimmer
 // #define ESP4 // Garten
 // #define ESP6 // mit Lithium-Akku
-#define ESP7  // Hausanschlussraum
+// #define ESP7  // Hausanschlussraum
+// #define ESP8 // Fernsehzimmer
+#define ESP9 // Heizraum
 
 #if defined(ESP1)
 // #define OUTDOOR 1
@@ -60,6 +67,13 @@
 // Voltage when on power supply
 #define VOLTAGE_PS 2600
 
+#elif defined(ESP6)
+#define OUTDOOR 1
+#define BME280ADDR 0x76
+#define VOLTAGE_PS 3300
+#define VOLTAGE_LOW 3300
+#define DEBUG 1
+
 #elif defined(ESP7) 
 // Indoor with GY49 light sensor
 #define INDOOR 1
@@ -68,6 +82,16 @@
 #define BME280ADDR 0x76
 #define DEBUG 1
 #define GY49 0x4a
+
+#elif defined(ESP8) || defined(ESP9)
+// Indoor
+#define INDOOR 1
+#define VOLTAGE_PS 3000
+#define NROFLEDS 1
+#define BME280ADDR 0x76
+#define DEBUG 1
+#define TSL2561
+
 #endif
 
 // 0x39 TSL2561
@@ -113,7 +137,7 @@ Adafruit_ADS1115 ads;
 #define BUZZER 13 //D7
 // Regenzaehler 13
 #define NEOPIXEL 14 //D5
-#define NIKONLED 2 // D4
+#define UNUSED1 2 // D4
 
 #ifdef NROFLEDS
 #include <Adafruit_NeoPixel.h>
@@ -121,10 +145,6 @@ Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS, NEOPIXEL, NEO_GRB + NEO_KHZ8
 #endif
 
 
-// Go to longer intervals
-#define VOLTAGE_LOW 2040
-// Minimum volate for operation
-#define VOLTAGE_MIN 2000
 
 // Run modes
 #define RM_START 1
@@ -423,6 +443,8 @@ void setup() {
   // start webserver - no we do not
   // server.begin();
 
+
+
   // setup i2c
   Wire.begin(I2CSDA, I2CSCL);
 
@@ -474,9 +496,6 @@ void setup() {
   ads.begin();
 #endif
 
-#ifdef NIKON
-  pinMode(NIKONLED, OUTPUT);
-#endif
 
   // setup the mqtt client
   client.setClient(espClient);
@@ -569,12 +588,8 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     int b = in.substring(position).toInt();
     setled(n, r, g, b);
 
-#ifdef NIKON
-  } else if (in.startsWith("nikon")) {
-    NIKONshoot();
-#endif
 
-    // Location
+    // Location - note that change becomes active after reboot only
   } else if (in.startsWith("location ")) {
     int position = 0;
     while (in.substring(position, position + 1) != " " && position < in.length()) {
@@ -618,6 +633,8 @@ void sleepFor(unsigned seconds) {
 #ifdef LSSENSOR
   ls_shutdown(); // shutdown light sensor
 #endif
+
+
   client.disconnect(); //disconnect from MQTT
   delay(100);
   WiFi.disconnect(); // disconnect from Wifi
@@ -798,41 +815,6 @@ int16_t soil() {
 #endif
 
 
-/************* Nikon Infrared Shoot Command */
-#ifdef NIKON
-void NIKONon(int pin, int time) {
-  static const int period = 25;
-  // found wait_time by measuring with oscilloscope
-  static const int wait_time = 9;
-
-  for (time = time / period; time > 0; time--) {
-    digitalWrite(pin, HIGH);
-    delayMicroseconds(wait_time);
-    digitalWrite(pin, LOW);
-    delayMicroseconds(wait_time);
-  }
-}
-
-
-void cameraSnap(int pin)
-{
-  // These Timing are from: http://www.bigmike.it/ircontrol/
-  NIKONon(pin, 2000);
-  //This Delay is broken into 3 lines because the delayMicroseconds() is only accurate to 16383. http://arduino.cc/en/Reference/DelayMicroseconds
-  delayMicroseconds(7830);
-  delayMicroseconds(10000);
-  delayMicroseconds(10000);
-  NIKONon(pin, 390);
-  delayMicroseconds(1580);
-  NIKONon(pin, 410);
-  delayMicroseconds(3580);
-  NIKONon(pin, 400);
-}
-
-void NIKONshoot() {
-  cameraSnap(NIKONLED);
-}
-#endif
 
 unsigned long lastReconnectAttempt = 0;
 void myPublish(char *topic, char *msg) {
@@ -856,13 +838,14 @@ void myPublish(char *topic, char *msg) {
 }
 
 
-unsigned int loopDelay = 2000;
+unsigned long int loopDelay = 2000;
+unsigned long now;
 int lastMotion = 0, thisMotion = 0;
 
 void loop() {
 
   if (!client.connected()) {
-    long now = millis();
+    now = millis();
     if (now - lastReconnectAttempt > 5000) {
       lastReconnectAttempt = now;
       if (reconnect()) {
@@ -872,34 +855,12 @@ void loop() {
   }
   client.loop();
 
-#ifdef UNDEF
-  if (runMode & RM_CONFIG) {
-    webClient = server.available();
-  }
-
-  if (webClient) {
-    Serial.println("Webclient connected");
-    while (webClient.connected()) {
-      if (webClient.available()) {
-        String line = webClient.readStringUntil('\r');
-        Serial.print(line);
-        if (line.length() == 1 && line[0] == '\n') {
-          webClient.println(htmlSetupPage());
-          break;
-        }
-      }
-    }
-    delay(1);
-    webClient.stop();
-    Serial.println("Client disconnected");
-  }
-#endif
 #ifdef MOTION
   thisMotion = digitalRead(pirInput);
 #else
   thisMotion = lastMotion;
 #endif
-  long now = millis();
+  now = millis();
   if ((now - lastMsg > loopDelay) || (lastMotion != thisMotion)) {
     lastMsg = now;
     ++value;
@@ -1026,15 +987,20 @@ void loop() {
 #endif
 
     if (value > 2) {
+#ifdef OUTDOOR
       if (voltage >= VOLTAGE_PS) {
         // on power supply
-        loopDelay = 60000;
+        loopDelay = 30*1000;
       } else if (voltage <= VOLTAGE_LOW) {
         sleepFor(8 * 60);
       } else {
         // on battery, standard voltage
         sleepFor(4 * 60);
       }
+#endif
+#ifdef INDOOR
+      loopDelay = 30*1000;
+#endif
 
     } else {
 
