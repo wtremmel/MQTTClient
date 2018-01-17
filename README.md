@@ -4,9 +4,10 @@ ESP8266 MQTT Client for sensor reading
 ## Parts List Indoor Version
 * ESP8266 Microcontroller incl. USB port for easier programming
 * BME280 Temperature/Pressure/Humidity Sensor
-* TSL45315 Light sensor
+* TSL2561 Light sensor
 * WS2812 RGP LEDs (as many as you need)
-* PIR motion sensor
+* PIR motion sensor (not used in Example)
+* See parts photo ![Parts](pictures/parts.jpg "Parts")
 
 ## Parts List Outdoor Version
 * ESP8266 Microcontroller incl. USB port for easier programming
@@ -17,4 +18,7 @@ ESP8266 MQTT Client for sensor reading
 * Two AA Eneloop cells (enough for three cloudy days)
 * 3.3V step down converter (depending on solar panel used)
 * 3.3V voltage regulator (to prevent battery discharge via the regulator)
+
+# Soldering
+1. 
 
