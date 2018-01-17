@@ -7,7 +7,7 @@ ESP8266 MQTT Client for sensor reading
 * TSL2561 Light sensor
 * WS2812 RGP LEDs (as many as you need)
 * PIR motion sensor (not used in Example)
-* See parts photo ![Parts](pictures/parts.jpg "Parts")
+* See parts photo ![Parts](pictures/wt-mqttclient-13.jpg "Parts")
 
 ## Parts List Outdoor Version
 * ESP8266 Microcontroller incl. USB port for easier programming
@@ -20,5 +20,5 @@ ESP8266 MQTT Client for sensor reading
 * 3.3V voltage regulator (to prevent battery discharge via the regulator)
 
 # Soldering
-1. 
+1. First solder the pin headers (pictures/wt-mqttclient-14.jpg)
 
