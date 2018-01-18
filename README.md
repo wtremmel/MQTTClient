@@ -32,7 +32,7 @@ PIR is not used in this example. Because I made a mistake with the PCB board, yo
 ## Config files
 Create a directory named *data* within your Arduino project directory.
 This directory should contain the following files, each file should only contain one string:
-* site
+* site   
   Name of the site. Like 'MyHouse'.
 * location  
   Name of the location within the site. Like 'Kitchen'.
@@ -40,9 +40,9 @@ This directory should contain the following files, each file should only contain
   Hostname of the sensor. Like 'sensor3'.
 * mqttserver  
   Name of the mqttserver to connect to. Like 'myserver.local' or '192.168.1.5'
-* ssid
+* ssid   
   Wifi network name to connect to.
-* pass
+* pass   
   WPA2 password of the wifi network.
 
 Then use the *Tools* -> *ESP8266 Sketch Data Upload* menuitem to upload the files.
