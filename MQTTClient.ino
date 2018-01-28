@@ -16,10 +16,11 @@
 // #define ESP2 // Kueche
 // #define ESP3 // Wohnzimmer
 // #define ESP4 // Garten
-// #define ESP6 // mit Lithium-Akku
+// #define ESP6 // Test mit Lithium-Akku
 // #define ESP7  // Hausanschlussraum
 // #define ESP8 // Fernsehzimmer
-#define ESP9 // Heizraum
+// #define ESP9 // Heizraum
+#define ESP10 // Schlafzimmer
 
 #if defined(ESP1)
 // #define OUTDOOR 1
@@ -68,11 +69,11 @@
 #define VOLTAGE_PS 2600
 
 #elif defined(ESP6)
-#define OUTDOOR 1
-#define BME280ADDR 0x76
+#define INDOOR 1
 #define VOLTAGE_PS 3300
 #define VOLTAGE_LOW 3300
 #define DEBUG 1
+#define ADXL345 6
 
 #elif defined(ESP7) 
 // Indoor with GY49 light sensor
@@ -83,7 +84,7 @@
 #define DEBUG 1
 #define GY49 0x4a
 
-#elif defined(ESP8) || defined(ESP9)
+#elif defined(ESP8) || defined(ESP9) || defined(ESP10)
 // Indoor
 #define INDOOR 1
 #define VOLTAGE_PS 3000
@@ -124,6 +125,57 @@ unsigned int msTSL2561;
 boolean gainTSL2561;
 #endif
 
+#if defined(ADXL345)
+#include <Adafruit_Sensor.h>
+#include <Adafruit_ADXL345_U.h>
+Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(ADXL345);
+float adxl345Zero = 0;
+unsigned int adxlCalibCount = 100;
+
+#define ADXLCALIB 100
+
+float calibrateADXL345 (void) {
+  float sum;
+  int i;
+
+#ifdef DEBUG
+  Serial.print("Calibrating ADXL345. Old value: ");
+  Serial.println((unsigned int)(adxl345Zero * 100.0));
+#endif
+
+  for (i=0; i < ADXLCALIB; i++) {
+    sensors_event_t event; 
+    accel.getEvent(&event);
+    sum += abs(event.acceleration.x)+abs(event.acceleration.y)+abs(event.acceleration.z);
+    delay(50);
+  }
+  adxl345Zero = sum / ADXLCALIB;
+  adxlCalibCount = 100;
+
+#ifdef DEBUG
+  Serial.print("Complete. New value:");
+  Serial.println((unsigned int)(adxl345Zero * 100.0));
+  delay(2000);
+#endif
+  
+  return adxl345Zero;
+}
+
+void setup_ADXL345(void) {
+  if (!accel.begin()) {
+#ifdef DEBUG
+    Serial.println("Error detecting ADXL345");
+#endif
+  }
+  
+  accel.setRange(ADXL345_RANGE_2_G);
+
+  // get average acceleration
+  calibrateADXL345();
+}
+#else
+void setup_ADXL345(void) {}
+#endif
 
 #ifdef ADC
 #include <Adafruit_ADS1015.h>
@@ -159,10 +211,13 @@ const char* fn_ssid = "/ssid";
 const char *fn_pass = "/pass";
 const char *fn_myname = "/myname";
 const char *fn_mqttserver = "/mqttserver";
+const char *fn_mqttpass = "/mqttpass";
+const char *fn_mqttuser = "/mqttuser";
+const char *fn_mqttport = "/mqttport";
 const char *fn_site = "/site";
 const char *fn_location = "/location";
 
-String Smyname, Spass, Sssid, Smqttserver, Ssite, Slocation;
+String Smyname, Spass, Sssid, Smqttserver, Ssite, Slocation, Smqttuser, Smqttpass, Smqttport;
 
 // Web for status and config
 // WiFiServer server(80);
@@ -239,6 +294,8 @@ String htmlSetupPage() {
     htmlTableRow(String("Wifi SSID:"), htmlInput(fn_ssid, Sssid)) +
     // htmlTableRow(String("Password:"),Spass) +
     htmlTableRow(String("MQTT Server:"), htmlInput(fn_mqttserver, Smqttserver)) +
+    htmlTableRow(String("MQTT User:"), htmlInput(fn_mqttuser, Smqttuser)) +
+    htmlTableRow(String("MQTT Password:"), htmlInput(fn_mqttpass, Smqttpass)) +
     htmlTableRow(String("<button type=\"submit\">Submit</button>"), String("")) +
     "</table>" +
     "</form>" +
@@ -325,6 +382,25 @@ void printConfig() {
   Serial.print(" / ");
   Serial.println(readFromFile(fn_mqttserver, s));
 
+  Serial.print(fn_mqttport);
+  Serial.print("=");
+  Serial.println(Smqttport);
+  Serial.print(" / ");
+  Serial.println(readFromFile(fn_mqttport, s));
+
+  Serial.print(fn_mqttuser);
+  Serial.print("=");
+  Serial.println(Smqttuser);
+  Serial.print(" / ");
+  Serial.println(readFromFile(fn_mqttuser, s));
+
+Serial.print(fn_mqttpass);
+  Serial.print("=");
+  Serial.println(Smqttpass);
+  Serial.print(" / ");
+  Serial.println(readFromFile(fn_mqttpass, s));
+
+
 #endif
 }
 
@@ -380,6 +456,9 @@ void setup() {
   Sssid = readFromFile(fn_ssid, Sssid);
   Spass = readFromFile(fn_pass, Spass);
   Smqttserver = readFromFile(fn_mqttserver, Smqttserver);
+  Smqttuser = readFromFile(fn_mqttuser, Smqttuser);
+  Smqttpass = readFromFile(fn_mqttpass, Smqttpass);
+  Smqttport = readFromFile(fn_mqttport, Smqttport);
   Ssite = readFromFile(fn_site, Ssite);
   Slocation = readFromFile(fn_location, Slocation);
 
@@ -431,22 +510,10 @@ void setup() {
   Serial.println(WiFi.subnetMask());
 #endif
 
-#ifdef UNDEF
-  if (MDNS.begin(Smyname.c_str())) {
-    MDNS.addService("http", "tcp", 80);
-    Serial.println("mDNS responder started");
-  } else {
-    Serial.println("Error starting mDNS");
-  }
-#endif
-
-  // start webserver - no we do not
-  // server.begin();
-
 
 
   // setup i2c
-  Wire.begin(I2CSDA, I2CSCL);
+  // Wire.begin(I2CSDA, I2CSCL);
 
   // setup light chip
 #ifdef LSSENSOR
@@ -478,6 +545,10 @@ void setup() {
   lightTSL2561.setPowerUp();
 #endif
 
+#ifdef ADXL345
+  setup_ADXL345();
+#endif
+
 // GY49 Light Sensor
 #ifdef GY49
   Wire.beginTransmission(GY49);
@@ -499,7 +570,7 @@ void setup() {
 
   // setup the mqtt client
   client.setClient(espClient);
-  client.setServer(Smqttserver.c_str(), 1883);
+  client.setServer(Smqttserver.c_str(), atoi(Smqttport.c_str()));
   client.setCallback(callback);
 
   setled(0, 0, 0);
@@ -609,6 +680,37 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     printConfig();
   }
 
+  // Mqttport
+  else if (in.startsWith("mqttport ")) {
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    writeFile(fn_mqttport, in.substring(position + 1));
+    printConfig();
+  }
+
+// Mqttuser
+  else if (in.startsWith("mqttuser ")) {
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    writeFile(fn_mqttuser, in.substring(position + 1));
+    printConfig();
+  }
+
+// Mqttserver
+  else if (in.startsWith("mqttpass ")) {
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    writeFile(fn_mqttpass, in.substring(position + 1));
+    printConfig();
+  }
+
+
   // Site
   else if (in.startsWith("site ")) {
     int position = 0;
@@ -657,8 +759,8 @@ boolean reconnect() {
   Serial.print("...");
 #endif
   // Attempt to connect
-  // if (client.connect(Smyname.c_str(),mytopic,0,0,"stopped")) {
-  if (client.connect(Smyname.c_str())) {
+  if (client.connect(Smyname.c_str(),Smqttuser.c_str(),Smqttpass.c_str(),mytopic,0,0,"stopped")) {
+  // if (client.connect(Smyname.c_str())) {
 #ifdef DEBUG
     Serial.println("connected");
 #endif
@@ -860,6 +962,25 @@ void loop() {
 #else
   thisMotion = lastMotion;
 #endif
+
+#ifdef ADXL345
+  sensors_event_t event; 
+  accel.getEvent(&event);
+  float bump = abs(event.acceleration.x)+abs(event.acceleration.y)+abs(event.acceleration.z);
+  float diff = adxl345Zero - bump;
+  if (diff > 0.5 || diff < -0.1) {
+    snprintf(topic, 50, "/%s/%s/seismo", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%d", (int) (diff *100.0));
+    myPublish(topic, msg);
+    adxlCalibCount--;
+    if (adxlCalibCount == 0) {
+      calibrateADXL345();
+    }
+  }
+
+
+#endif
+
   now = millis();
   if ((now - lastMsg > loopDelay) || (lastMotion != thisMotion)) {
     lastMsg = now;
