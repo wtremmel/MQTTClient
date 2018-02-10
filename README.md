@@ -40,11 +40,11 @@ This directory should contain the following files, each file should only contain
   Hostname of the sensor. Like 'sensor3'.
 * mqttserver  
   Name of the mqttserver to connect to. Like 'myserver.local' or '192.168.1.5'
-* mqttuser
+* mqttuser  
   Username when connecting to the mqttserver. Like 'sensor3'.
-* mqttpass
+* mqttpass  
   Password when connecting to the mqttserver. Be aware that this is sent unencrypted!
-* mqttport
+* mqttport  
   TCP port of the mqttserver. Use 1883 if in doubt.
 * ssid   
   Wifi network name to connect to.

@@ -12,7 +12,17 @@
 // Minimum volate for operation
 #define VOLTAGE_MIN 1900
 
-// #define ESP1 // Test Arbeitszimmer
+//Pin defintions
+#define I2CSDA 4  //D2 gruen
+#define I2CSCL 5  //D1 gelb
+#define PIRINPUT 12 //D6
+// Regenzaehler 13
+#define NEOPIXEL 14 //D5
+#define UNUSED1 2 // D4
+#define DUSTTX // D8
+#define DUSTRX // D7
+
+#define ESP1 // Test Arbeitszimmer
 // #define ESP2 // Kueche
 // #define ESP3 // Wohnzimmer
 // #define ESP4 // Garten
@@ -20,14 +30,21 @@
 // #define ESP7  // Hausanschlussraum
 // #define ESP8 // Fernsehzimmer
 // #define ESP9 // Heizraum
-#define ESP10 // Schlafzimmer
+// #define ESP10 // Büro Wolfgang
+// #define ESP11 // Lolin32 Lite
+// #define ESP12 // Schlafzimmer
 
 #if defined(ESP1)
 // #define OUTDOOR 1
 #define INDOOR 1
 #define NROFLEDS 1
 // #define VOLTAGE_PS 
-#define BME280ADDR 0x76
+// #define BME280ADDR 0x76
+#define BME680ADDR 0x77
+#define GY49 0x4a
+// #define SI7021 0x40
+#define SDS011RX D4
+#define SDS011TX D3
 #define DEBUG 1
 // #define LS_FACTOR_M 0x02
 // #define LSSENSOR 1
@@ -84,8 +101,16 @@
 #define DEBUG 1
 #define GY49 0x4a
 
-#elif defined(ESP8) || defined(ESP9) || defined(ESP10)
+#elif defined(ESP8) || defined(ESP9) || defined(ESP10) || defined(ESP12)
 // Indoor
+#define INDOOR 1
+#define VOLTAGE_PS 3000
+#define NROFLEDS 1
+#define BME280ADDR 0x76
+#define DEBUG 1
+#define TSL2561
+
+#elif defined(ESP11)
 #define INDOOR 1
 #define VOLTAGE_PS 3000
 #define NROFLEDS 1
@@ -95,26 +120,61 @@
 
 #endif
 
+// 0x29 TSL45315 (Light)
+// 0x38 VEML6070 (Light)
 // 0x39 TSL2561
+// 0x40 SI7021
 // 0x48 4*AD converter
 // 0x4a GY49 or MAX44009 Light Sensor
+// 0x50 PCF8583P
+// 0x76 BME280
+// 0x77 BME680
 
 
 #include <Arduino.h>
 
+#if defined(ARDUINO_ARCH_ESP8266)
 #include <ESP8266WiFi.h>
-// #include <ESP8266mDNS.h>
+#else
+#include <WiFi.h>
+#endif
+
 #include <Wire.h>
 #include <PubSubClient.h>
 #include <FS.h>
 
+// to get reset reason
+#if defined(ARDUINO_ARCH_ESP32)
+#include <rom/rtc.h>
+#include <SPIFFS.h>
+#endif
+
 #include <SparkFunBME280.h>
-#include <ESP8266HTTPClient.h>
+// #include <ESP8266HTTPClient.h>
 
 // UV-Sensor - just testing at the moment
 #ifdef UVSENSOR
 #include "Adafruit_VEML6070.h"
 Adafruit_VEML6070 uv = Adafruit_VEML6070();
+#endif
+
+// BME680 Sensor
+#if defined(BME680ADDR)
+#include <Adafruit_Sensor.h>
+#include "Adafruit_BME680.h"
+Adafruit_BME680 bme680;
+#endif
+
+// Temp + Humidity Sensor Si7021
+#if defined(SI7021)
+#include "Adafruit_Si7021.h"
+Adafruit_Si7021 si7021 = Adafruit_Si7021();
+#endif
+
+// Dust Sensor SDS011
+#if defined(SDS011RX) && defined(SDS011TX)
+#include <SDS011.h>
+SDS011 sds011;
 #endif
 
 // Light sensor TSL2561
@@ -182,14 +242,6 @@ void setup_ADXL345(void) {}
 Adafruit_ADS1115 ads;
 #endif
 
-//Pin defintions
-#define I2CSDA 4  //D2 gruen
-#define I2CSCL 5  //D1 gelb
-#define PIRINPUT 12 //D6
-#define BUZZER 13 //D7
-// Regenzaehler 13
-#define NEOPIXEL 14 //D5
-#define UNUSED1 2 // D4
 
 #ifdef NROFLEDS
 #include <Adafruit_NeoPixel.h>
@@ -204,8 +256,9 @@ Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS, NEOPIXEL, NEO_GRB + NEO_KHZ8
 #define RM_CONFIG 4
 byte runMode = RM_START | RM_SENSOR | RM_CONFIG;
 
-
+#if defined(ARDUINO_ARCH_ESP8266)
 ADC_MODE(ADC_VCC);
+#endif
 
 const char* fn_ssid = "/ssid";
 const char *fn_pass = "/pass";
@@ -224,7 +277,7 @@ String Smyname, Spass, Sssid, Smqttserver, Ssite, Slocation, Smqttuser, Smqttpas
 WiFiClient espClient, webClient;
 PubSubClient client;
 // experimental
-WiFiEventHandler disconnectedEventHandler;
+// WiFiEventHandler disconnectedEventHandler;
 
 long lastMsg = 0;
 char msg[50];
@@ -244,12 +297,21 @@ String readFromFile(const char *filename, String s) {
   if (SPIFFS.exists(filename)) {
     File f = SPIFFS.open(filename, "r");
     if (!f) {
+#ifdef DEBUG
+      Serial.print("Cannot read from file ");
+      Serial.println(filename);
+#endif
       s = "";
     } else {
       s = f.readString();
       f.close();
     }
   } else {
+#ifdef DEBUG
+    Serial.print("File ");
+    Serial.print(filename);
+    Serial.println("does not exist");
+#endif
   }
   // remove trailing cr
   s.trim();
@@ -404,12 +466,38 @@ Serial.print(fn_mqttpass);
 #endif
 }
 
+#if defined(ARDUINO_ARCH_ESP32)
+void verbose_print_reset_reason(RESET_REASON reason)
+{
+  switch ( reason)
+  {
+    case 1  : Serial.println ("Vbat power on reset");break;
+    case 3  : Serial.println ("Software reset digital core");break;
+    case 4  : Serial.println ("Legacy watch dog reset digital core");break;
+    case 5  : Serial.println ("Deep Sleep reset digital core");break;
+    case 6  : Serial.println ("Reset by SLC module, reset digital core");break;
+    case 7  : Serial.println ("Timer Group0 Watch dog reset digital core");break;
+    case 8  : Serial.println ("Timer Group1 Watch dog reset digital core");break;
+    case 9  : Serial.println ("RTC Watch dog Reset digital core");break;
+    case 10 : Serial.println ("Instrusion tested to reset CPU");break;
+    case 11 : Serial.println ("Time Group reset CPU");break;
+    case 12 : Serial.println ("Software reset CPU");break;
+    case 13 : Serial.println ("RTC Watch dog Reset CPU");break;
+    case 14 : Serial.println ("for APP CPU, reseted by PRO CPU");break;
+    case 15 : Serial.println ("Reset when the vdd voltage is not stable");break;
+    case 16 : Serial.println ("RTC Watch dog reset digital core and rtc module");break;
+    default : Serial.println ("NO_MEAN");
+  }
+}
+#endif
+
 void setup() {
 
 #ifdef DEBUG
   Serial.begin(115200);
   // USE_SERIAL.setDebugOutput(true);
   Serial.println("\nStarting");
+#if defined(ARDUINO_ARCH_ESP8266)
   Serial.print("Sleep mode:");
   Serial.println(WiFi.getSleepMode());
   Serial.print("Phy mode:");
@@ -421,6 +509,15 @@ void setup() {
   Serial.print("Reset info:");
   Serial.println(ESP.getResetInfo());
 #endif
+#if defined(ARDUINO_ARCH_ESP32)
+  Serial.print("CPU0 reset reason: ");
+  verbose_print_reset_reason(rtc_get_reset_reason(0));
+  Serial.print("CPU1 reset reason: ");
+  verbose_print_reset_reason(rtc_get_reset_reason(1));
+  
+#endif
+
+#endif
 
   // Rain counter starts very early
 #ifdef RAINCOUNTER
@@ -428,9 +525,9 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(RAINCOUNTER), countRaindrops, FALLING);
 #endif
 
+#if defined(ARDUINO_ARCH_ESP8266) && defined(OUTDOOR)
   voltage = ESP.getVcc();
 
-#ifdef OUTDOOR
   // before doing anything check if we have enough power
   if (voltage <= VOLTAGE_MIN) {
 #ifdef DEBUG
@@ -470,7 +567,9 @@ void setup() {
   WiFi.disconnect();
   delay(100);
   WiFi.mode(WIFI_STA);
+#if defined(ARDUINO_ARCH_ESP8266)
   WiFi.hostname(Smyname);
+#endif
   WiFi.begin(Sssid.c_str(), Spass.c_str());
 
 #ifdef DEBUG
@@ -484,7 +583,13 @@ void setup() {
     delay(500);
     retries++;
 #ifdef DEBUG
-    Serial.print(".");
+    Serial.print("Wifi.status() = ");
+    Serial.println(WiFi.status());
+    if ((retries % 20) == 0) {
+      WiFi.printDiag(Serial);
+      Serial.setDebugOutput(true);
+      WiFi.waitForConnectResult();
+    }
 #endif
     if (retries > 100) {
       // no connection after lot of retries
@@ -513,7 +618,7 @@ void setup() {
 
 
   // setup i2c
-  // Wire.begin(I2CSDA, I2CSCL);
+  Wire.begin(I2CSDA, I2CSCL);
 
   // setup light chip
 #ifdef LSSENSOR
@@ -525,6 +630,11 @@ void setup() {
 
 #ifdef UVSENSOR
   uv.begin(VEML6070_1_T);
+#endif
+
+  // Setup Si7021
+#if defined(SI7021)
+  si7021.begin();
 #endif
 
 #ifdef TSL2561
@@ -555,6 +665,27 @@ void setup() {
   Wire.write(0x02);
   Wire.write(0x40);
   Wire.endTransmission();
+#endif
+
+// BME680 sensor
+#if defined(BME680ADDR)
+if (!bme680.begin()) {
+#ifdef DEBUG
+  Serial.println("BME60 not found");
+#endif
+} else { 
+  bme680.setTemperatureOversampling(BME680_OS_8X);
+  bme680.setHumidityOversampling(BME680_OS_2X);
+  bme680.setPressureOversampling(BME680_OS_4X);
+  bme680.setIIRFilterSize(BME680_FILTER_SIZE_3);
+  bme680.setGasHeater(320, 150);
+}
+#endif
+
+// SDS011 Dust Sensor
+#if defined(SDS011RX) && defined(SDS011TX)
+  Serial.println("Starting SDS011 on Port " + String(SDS011RX) + " and " + String(SDS011TX));
+  sds011.begin(SDS011RX,SDS011TX);
 #endif
 
   // setup PIR
@@ -986,7 +1117,7 @@ void loop() {
     lastMsg = now;
     ++value;
 
-#ifdef OUTDOOR
+#if defined(OUTDOOR) && defined(ARDUINO_ARCH_ESP8266)
     voltage = ESP.getVcc();
     snprintf(topic, 50, "/%s/%s/voltage", Ssite.c_str(), Smyname.c_str());
     snprintf(msg, 50, "%s", String(voltage / 1000.0, 3).c_str());
@@ -1092,12 +1223,83 @@ void loop() {
       myPublish(topic, msg);
     }
 
+#if !defined(SI7021)
     snprintf(topic, 50, "/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
     snprintf(msg, 50, "%s", String(wetterSensor.readFloatHumidity(), 2).c_str());
     if (value > 2) {
       myPublish(topic, msg);
     }
 #endif
+#endif
+
+#if defined(BME680ADDR)
+    if (bme680.performReading()) {
+      snprintf(topic, 50, "/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
+      snprintf(msg, 50, "%s", String(bme680.temperature, 2).c_str());
+      if (value > 2) {  
+        myPublish(topic, msg);
+      }
+
+      snprintf(topic, 50, "/%s/%s/airpressure", Ssite.c_str(), Slocation.c_str());
+      snprintf(msg, 50, "%s", String(bme680.pressure / 100.0, 2).c_str());
+      if (value > 2) {
+        myPublish(topic, msg);
+      }
+    
+      snprintf(topic, 50, "/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
+      snprintf(msg, 50, "%s", String(bme680.humidity, 2).c_str());
+      if (value > 2) {
+        myPublish(topic, msg);
+      }
+
+      snprintf(topic, 50, "/%s/%s/airquality", Ssite.c_str(), Slocation.c_str());
+      snprintf(msg, 50, "%s", String(bme680.gas_resistance / 1000.0, 2).c_str());
+      if (value > 2) {
+        myPublish(topic, msg);
+      }
+    } 
+#ifdef DEBUG
+    else {
+      Serial.println("Error getting reading from BME680");
+    }
+#endif
+#endif
+
+#if defined(SI7021)
+    snprintf(topic, 50, "/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%s", String(si7021.readTemperature(), 2).c_str());
+    if (value > 2) {
+      myPublish(topic, msg);
+    }
+
+    snprintf(topic, 50, "/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%s", String(si7021.readHumidity(), 2).c_str());
+    if (value > 2) {
+      myPublish(topic, msg);
+    }
+#endif
+
+#if defined(SDS011RX) && defined(SDS011TX)
+    int sds011error;
+    float p10,p25;
+    // sds011.wakeup();
+    delay(100);
+    sds011error = sds011.read(&p25,&p10);
+    if (!sds011error) {
+      snprintf(topic, 50, "/%s/%s/P25", Ssite.c_str(), Slocation.c_str());
+      snprintf(msg, 50, "%s", String(p25, 2).c_str());
+      if (value > 2) {
+        myPublish(topic, msg);
+        // sds011.sleep();
+      }
+      snprintf(topic, 50, "/%s/%s/P10", Ssite.c_str(), Slocation.c_str());
+      snprintf(msg, 50, "%s", String(p10, 2).c_str());
+      if (value > 2) {
+        myPublish(topic, msg);
+      }
+    }
+#endif
+
 #ifdef MOTION
     lastMotion = thisMotion;
     snprintf(topic, 50, "/%s/%s/motion", Ssite.c_str(), Slocation.c_str());
@@ -1108,7 +1310,7 @@ void loop() {
 #endif
 
     if (value > 2) {
-#ifdef OUTDOOR
+#if defined(OUTDOOR) && defined(ARDUINO_ARCH_ESP8266)
       if (voltage >= VOLTAGE_PS) {
         // on power supply
         loopDelay = 30*1000;
@@ -1120,7 +1322,7 @@ void loop() {
       }
 #endif
 #ifdef INDOOR
-      loopDelay = 30*1000;
+      loopDelay = 60*1000;
 #endif
 
     } else {
@@ -1128,5 +1330,6 @@ void loop() {
     }
   }
 }
+
 
 
