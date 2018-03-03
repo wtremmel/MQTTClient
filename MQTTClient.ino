@@ -30,7 +30,7 @@
 // #define ESP7  // Hausanschlussraum
 // #define ESP8 // Fernsehzimmer
 // #define ESP9 // Heizraum
-// #define ESP10 // Büro Wolfgang
+// #define ESP10 // Büro Wolfgang / Schifferstadt
 // #define ESP11 // Lolin32 Lite
 // #define ESP12 // Schlafzimmer
 #define ESP13 // Lichterkette
@@ -273,17 +273,15 @@ Adafruit_ADS1115 ads;
 #include <Adafruit_NeoPixel.h>
 Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS, NEOPIXEL, NEO_GRB + NEO_KHZ800);
 #endif
-
-#if NROFLEDS > 10
-
-#endif
-
+uint32_t snowColor=0;
+uint32_t snowInterval=0;
 
 // Run modes
 #define RM_START 1
 #define RM_SENSOR 2
 #define RM_CONFIG 4
-byte runMode = RM_START | RM_SENSOR | RM_CONFIG;
+#define RM_SNOW 8
+uint32_t runMode = RM_START | RM_SENSOR | RM_CONFIG;
 
 #if defined(ARDUINO_ARCH_ESP8266)
 ADC_MODE(ADC_VCC);
@@ -432,6 +430,43 @@ void setled(byte show) {
 #endif
 }
 
+uint32_t makeColor(int r, int g, int b) {
+#ifdef NROFLEDS
+  return led.Color(constrain(r,0,255),constrain(g,0,255),constrain(b,0,255));
+#endif
+}
+
+void monochrome(byte r, byte g, byte b) {
+#ifdef NROFLEDS
+  for (int i=0; i < NROFLEDS; i++) {
+    led.setPixelColor(i,r,g,b);
+  }
+  led.show();
+#endif
+}
+
+void monochrome(byte r, byte g, byte b, byte variant) {
+#ifdef NROFLEDS
+  for (int i=0; i < NROFLEDS; i++) {
+    led.setPixelColor(i,makeColor(r+random(-variant,variant+1),g+random(-variant,variant+1),b+random(-variant,variant+1)));
+  }
+  led.show();
+#endif
+}
+
+void snow(uint32_t color, int interval) {
+#ifdef NROFLEDS
+  for (int i=0; i < howoften; i++) {
+    int which = random(0,NROFLEDS);
+    int oldcolor = led.getPixelColor(which);
+    led.setPixelColor(which, color);
+    led.show();
+    delay(interval);
+    led.setPixelColor(which,oldcolor);
+    led.show();
+  }
+#endif
+}
 
 void printConfig() {
 #ifdef DEBUG
@@ -831,6 +866,61 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     int b = in.substring(position).toInt();
     setled(n, r, g, b);
 
+  } else if (in.startsWith("monochrome ")) {
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    int r = in.substring(position).toInt();
+    position++;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    int g = in.substring(position).toInt();
+    position++;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    int b = in.substring(position).toInt();
+    position++;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    int v = in.substring(position).toInt();
+    monochrome(r, g, b, v);
+
+  } else if (in.startsWith("snow ")) {  
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    int r = in.substring(position).toInt();
+    position++;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    int g = in.substring(position).toInt();
+    position++;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    int b = in.substring(position).toInt();
+    position++;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    int n = in.substring(position).toInt();
+
+    if (n == 0) {
+      runMode &= ~RM_SNOW;
+    } else {
+      runMode |= RM_SNOW;
+    }
+
+    snowColor = led.Color(r,g,b);
+    snowInterval = n;
+
+    snow(snowColor,n);
 
     // Location - note that change becomes active after reboot only
   } else if (in.startsWith("location ")) {
