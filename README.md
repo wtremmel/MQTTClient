@@ -1,6 +1,19 @@
 # MQTTClient
 ESP8266 MQTT Client for sensor reading
 
+# Hardware
+## Supported Sensors
+* BME280 - Temperature, humidity, air pressure
+* BME680 - Temperature, humidity, air pressure, air quality
+* GY49 - light level
+* TSL2561 - light level
+* TSL45315 - light level
+* VEML6070 - UV light level
+* SI7021 - Temperature, humidity
+* SDS011 - dust (via soft serial interface)
+* ADXL345 - acceleration
+* ADC1115 - A/D converter
+
 ## Parts List Indoor Version
 * ESP8266 Microcontroller incl. USB port for easier programming
 * BME280 Temperature/Pressure/Humidity Sensor

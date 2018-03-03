@@ -22,7 +22,7 @@
 #define DUSTTX // D8
 #define DUSTRX // D7
 
-#define ESP1 // Test Arbeitszimmer
+// #define ESP1 // Test Arbeitszimmer
 // #define ESP2 // Kueche
 // #define ESP3 // Wohnzimmer
 // #define ESP4 // Garten
@@ -33,6 +33,7 @@
 // #define ESP10 // Büro Wolfgang
 // #define ESP11 // Lolin32 Lite
 // #define ESP12 // Schlafzimmer
+#define ESP13 // Lichterkette
 
 #if defined(ESP1)
 // #define OUTDOOR 1
@@ -118,6 +119,12 @@
 #define DEBUG 1
 #define TSL2561
 
+#elif defined(ESP13)
+#define INDOOR 1
+#define NROFLEDS 50
+#define DEBUG 1
+#define DS3231 0x68
+
 #endif
 
 // 0x29 TSL45315 (Light)
@@ -127,6 +134,7 @@
 // 0x48 4*AD converter
 // 0x4a GY49 or MAX44009 Light Sensor
 // 0x50 PCF8583P
+// 0x68 DS3231 Clock
 // 0x76 BME280
 // 0x77 BME680
 
@@ -156,6 +164,24 @@
 #ifdef UVSENSOR
 #include "Adafruit_VEML6070.h"
 Adafruit_VEML6070 uv = Adafruit_VEML6070();
+#endif
+
+// DS3231 real time clock
+#if defined(DS3231)
+#include "RTClib.h"
+RTC_DS3231 rtc;
+static byte rtc_initialized = 0;
+
+// print current time
+void printCurrentTime(void) {
+  if (rtc_initialized) {
+    DateTime now = rtc.now();
+    Serial.println("Now: " + String(now.year()) + "-" + String(now.month()) + "-" + String(now.day()) + " " + String(now.hour()) + ":" + String(now.minute()));
+  } else {
+    Serial.println("Error: RTC not initialized");
+  }
+}
+
 #endif
 
 // BME680 Sensor
@@ -248,6 +274,9 @@ Adafruit_ADS1115 ads;
 Adafruit_NeoPixel led = Adafruit_NeoPixel(NROFLEDS, NEOPIXEL, NEO_GRB + NEO_KHZ800);
 #endif
 
+#if NROFLEDS > 10
+
+#endif
 
 
 // Run modes
@@ -632,6 +661,18 @@ void setup() {
   uv.begin(VEML6070_1_T);
 #endif
 
+//Setup real time clock
+#if defined(DS3231)
+  if (rtc.begin() && !rtc.lostPower()) {
+    rtc_initialized = 1;
+#ifdef DEBUG  
+    printCurrentTime();
+#endif
+    } else {
+    rtc_initialized = 0;
+  }
+#endif
+
   // Setup Si7021
 #if defined(SI7021)
   si7021.begin();
@@ -852,6 +893,23 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     printConfig();
   }
 
+  // Unix time if RTC is defined
+#if defined(DS3231)
+  else if (in.startsWith("unixtime ")) {
+    int position = 0;
+    while (in.substring(position, position + 1) != " " && position < in.length()) {
+      position++;
+    }
+    uint32_t newnow = in.substring(position).toInt();
+    printCurrentTime();
+    rtc.adjust(DateTime(newnow));
+    printCurrentTime();
+  }
+
+  else if (in.startsWith("now")) {
+    printCurrentTime();
+  }
+#endif
 
   else {
 #ifdef DEBUG
