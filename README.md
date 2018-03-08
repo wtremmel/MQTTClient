@@ -14,6 +14,11 @@ ESP8266 MQTT Client for sensor reading
 * ADXL345 - acceleration
 * ADC1115 - A/D converter
 
+## Other supported hardware
+* DS3221 - Real Time Clock
+* Neopixel RGB LEDs
+
+
 ## Parts List Indoor Version
 * ESP8266 Microcontroller incl. USB port for easier programming
 * BME280 Temperature/Pressure/Humidity Sensor

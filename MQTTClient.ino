@@ -30,7 +30,7 @@
 // #define ESP7  // Hausanschlussraum
 // #define ESP8 // Fernsehzimmer
 // #define ESP9 // Heizraum
-// #define ESP10 // Büro Wolfgang / Schifferstadt
+// #define ESP10 // Büro Wolfgang / Schifferstadt / Flur 1.OG
 // #define ESP11 // Lolin32 Lite
 // #define ESP12 // Schlafzimmer
 #define ESP13 // Lichterkette
@@ -124,6 +124,7 @@
 #define NROFLEDS 50
 #define DEBUG 1
 #define DS3231 0x68
+#define ALEXA
 
 #endif
 
@@ -134,6 +135,7 @@
 // 0x48 4*AD converter
 // 0x4a GY49 or MAX44009 Light Sensor
 // 0x50 PCF8583P
+// 0x57 ATMEL732
 // 0x68 DS3231 Clock
 // 0x76 BME280
 // 0x77 BME680
@@ -182,7 +184,23 @@ void printCurrentTime(void) {
   }
 }
 
+void rtcSetup() {
+  if (rtc.begin() && !rtc.lostPower()) {
+    rtc_initialized = 1;
+#ifdef DEBUG  
+    printCurrentTime();
 #endif
+    } else {
+    rtc_initialized = 0;
+  }
+}
+#endif
+
+#if defined(ALEXA)
+#include "fauxmoESP.h"
+fauxmoESP fauxmo;
+#endif
+
 
 // BME680 Sensor
 #if defined(BME680ADDR)
@@ -454,9 +472,20 @@ void monochrome(byte r, byte g, byte b, byte variant) {
 #endif
 }
 
+void ledsshift() {
+#ifdef NROFLEDS
+  uint32_t zeroled;
+  zeroled = led.getPixelColor(0);
+  for (int i=1; i < NROFLEDS; i++) {
+    led.setPixelColor(i-1,led.getPixelColor(i));
+  }
+  led.setPixelColor(NROFLEDS-1,zeroled);
+  led.show();
+#endif
+}
+
 void snow(uint32_t color, int interval) {
 #ifdef NROFLEDS
-  for (int i=0; i < howoften; i++) {
     int which = random(0,NROFLEDS);
     int oldcolor = led.getPixelColor(which);
     led.setPixelColor(which, color);
@@ -464,7 +493,6 @@ void snow(uint32_t color, int interval) {
     delay(interval);
     led.setPixelColor(which,oldcolor);
     led.show();
-  }
 #endif
 }
 
@@ -698,14 +726,7 @@ void setup() {
 
 //Setup real time clock
 #if defined(DS3231)
-  if (rtc.begin() && !rtc.lostPower()) {
-    rtc_initialized = 1;
-#ifdef DEBUG  
-    printCurrentTime();
-#endif
-    } else {
-    rtc_initialized = 0;
-  }
+  rtcSetup();
 #endif
 
   // Setup Si7021
@@ -779,6 +800,25 @@ if (!bme680.begin()) {
   client.setClient(espClient);
   client.setServer(Smqttserver.c_str(), atoi(Smqttport.c_str()));
   client.setCallback(callback);
+
+#if defined(ALEXA)
+  fauxmo.enable(true);
+  fauxmo.addDevice("Lichterkette");
+
+  fauxmo.onSetState([](unsigned char device_id, const char * device_name, bool state) {
+        Serial.printf("[MAIN] Device #%d (%s) state: %s\n", device_id, device_name, state ? "ON" : "OFF");
+        if (state) {
+          monochrome(0,10,40,30);
+        } else {
+          setled(0);
+        }
+  });
+
+  fauxmo.onGetState([](unsigned char device_id, const char * device_name) {
+        return 1;
+  });
+
+#endif
 
   setled(0, 0, 0);
 }
@@ -889,6 +929,9 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     int v = in.substring(position).toInt();
     monochrome(r, g, b, v);
 
+  } else if (in.startsWith("ledsshift")) {
+    ledsshift();
+
   } else if (in.startsWith("snow ")) {  
     int position = 0;
     while (in.substring(position, position + 1) != " " && position < in.length()) {
@@ -993,6 +1036,7 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     uint32_t newnow = in.substring(position).toInt();
     printCurrentTime();
     rtc.adjust(DateTime(newnow));
+    rtcSetup();
     printCurrentTime();
   }
 
@@ -1235,6 +1279,7 @@ void loop() {
     }
   }
   client.loop();
+  fauxmo.handle();
 
 #ifdef MOTION
   thisMotion = digitalRead(pirInput);
