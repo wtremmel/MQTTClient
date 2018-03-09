@@ -174,6 +174,13 @@ Adafruit_VEML6070 uv = Adafruit_VEML6070();
 RTC_DS3231 rtc;
 static byte rtc_initialized = 0;
 
+// Task Scheduler only for Indoor use
+#if defined(INDOOR)
+#include <TaskScheduler.h>
+Scheduler runner;
+#endif
+
+
 // print current time
 void printCurrentTime(void) {
   if (rtc_initialized) {
@@ -371,46 +378,130 @@ String writeFile(const char *filename, String s) {
   return s;
 }
 
-String htmlTableRow(String s1, String s2) {
-  String sRow =
-    String("<tr><td>" + s1 + "</td><td>" + s2 + "</td></tr>\n");
-  return sRow;
+
+uint32_t makeColor(int r, int g, int b) {
+#ifdef NROFLEDS
+  return led.Color(constrain(r,0,255),constrain(g,0,255),constrain(b,0,255));
+#endif
 }
 
-String htmlInput(const char* id, String s) {
-  String sIn =
-    String("<input id=\"" + String(id) + "\" value=\"" + s + "\">");
-  return sIn;
+// dims all colors equally by factor dimBy
+uint32_t dimColor(uint32_t color, int dimBy) {
+  uint8_t 
+      r = (uint8_t)(color >> 16),
+      g = (uint8_t)(color >>  8),
+      b = (uint8_t)color;
+
+  r /= dimBy;
+  g /= dimBy;
+  b /= dimBy;
+  return makeColor(r,g,b);
 }
 
-String htmlSetupPage() {
-  String htmlPage =
-    String("HTTP/1.1 200 OK\r\n") +
-    "Content-Type: text/html\r\n" +
-    "Connection: close\r\n" +  // the connection will be closed after completion of the response
-    "\r\n" +
-    "<!DOCTYPE HTML>" +
-    "<html>" +
-    "<h1>" + Smyname + "</h1>" +
-    "<hr>" +
-    "<form method=\"post\">" +
-    "<table>" +
-    htmlTableRow(String("Hostname:"), htmlInput(fn_myname, Smyname)) +
-    htmlTableRow(String("Site name:"), htmlInput(fn_site, Ssite)) +
-    htmlTableRow(String("Location:"), htmlInput(fn_location, Slocation)) +
-    htmlTableRow(String("Wifi SSID:"), htmlInput(fn_ssid, Sssid)) +
-    // htmlTableRow(String("Password:"),Spass) +
-    htmlTableRow(String("MQTT Server:"), htmlInput(fn_mqttserver, Smqttserver)) +
-    htmlTableRow(String("MQTT User:"), htmlInput(fn_mqttuser, Smqttuser)) +
-    htmlTableRow(String("MQTT Password:"), htmlInput(fn_mqttpass, Smqttpass)) +
-    htmlTableRow(String("<button type=\"submit\">Submit</button>"), String("")) +
-    "</table>" +
-    "</form>" +
-    "</html>" +
-    "\r\n";
-  return htmlPage;
-
+// round-robin map
+uint32_t rrmap(int in) {
+#ifdef NROFLEDS
+  if (in < 0) {
+    return NROFLEDS+in;
+  } else if (in >= NROFLEDS) {
+    return in-NROFLEDS;
+  } else
+    return in;
+#endif
 }
+
+// displays a number of led with the center one brightest
+void centerLight(int center, unsigned int width, uint32_t color) {
+#ifdef NROFLEDS
+  led.setPixelColor(rrmap(center),color);
+  for (int i=1; i<=width; i++) {
+    led.setPixelColor(rrmap(center+i),dimColor(color,i*2));
+    led.setPixelColor(rrmap(center-i),dimColor(color,i*2));
+  }
+#endif
+}
+
+// show the temperature on a scale from minTemp to maxTemp, negative values are blue, positive values are red
+void showTemperature(int minTemp, int maxTemp, int thisTemp) {
+#ifdef NROFLEDS
+#ifdef DEBUG
+  Serial.println("showTemperature(" + String(minTemp) + "," + String(maxTemp) + "," + String(thisTemp) + ")");
+#endif
+  for (int i=minTemp; i<=0;i++) {
+    if (i == thisTemp) {
+      led.setPixelColor(map(i,minTemp,maxTemp,0,NROFLEDS-1),0,0,254);
+    } else {
+      led.setPixelColor(map(i,minTemp,maxTemp,0,NROFLEDS-1),0,0,1);
+    }
+  }
+  for (int i=1;i<=maxTemp;i++) {
+    if (i == thisTemp) {
+      led.setPixelColor(map(i,minTemp,maxTemp,0,NROFLEDS-1),254,0,0);
+    } else {
+      led.setPixelColor(map(i,minTemp,maxTemp,0,NROFLEDS-1),1,0,0);
+    }
+  }
+  led.show();
+#endif  
+}
+
+// show the humidity on a scale of 0 to 100
+void showHumidity(int thisHum) {
+#ifdef NROFLEDS
+  for (int i=0; i <= 100; i++) {
+    if (i <= thisHum) {
+      led.setPixelColor(map(i,0,100,0,NROFLEDS-1),0,20,20);
+    } else {
+      led.setPixelColor(map(i,0,100,0,NROFLEDS-1),0,0,0);
+    }
+  }
+  led.show();
+#endif
+}
+
+// set all LEDs to the same color
+void monochrome(byte r, byte g, byte b) {
+#ifdef NROFLEDS
+  for (int i=0; i < NROFLEDS; i++) {
+    led.setPixelColor(i,r,g,b);
+  }
+  led.show();
+#endif
+}
+
+// set LEDs to a variant of the same color (randomized)
+void monochrome(byte r, byte g, byte b, byte variant) {
+#ifdef NROFLEDS
+  for (int i=0; i < NROFLEDS; i++) {
+    led.setPixelColor(i,makeColor(r+random(-variant,variant+1),g+random(-variant,variant+1),b+random(-variant,variant+1)));
+  }
+  led.show();
+#endif
+}
+
+#if defined(NROFLEDS) && defined(INDOOR)
+void ledsshift() {
+  uint32_t zeroled;
+  zeroled = led.getPixelColor(0);
+  for (int i=1; i < NROFLEDS; i++) {
+    led.setPixelColor(i-1,led.getPixelColor(i));
+  }
+  led.setPixelColor(NROFLEDS-1,zeroled);
+  led.show();
+}
+Task ledshift_task(2000,TASK_FOREVER,&ledsshift);
+
+
+void snow(uint32_t color, int interval) {
+    int which = random(0,NROFLEDS);
+    int oldcolor = led.getPixelColor(which);
+    led.setPixelColor(which, color);
+    led.show();
+    delay(interval);
+    led.setPixelColor(which,oldcolor);
+    led.show();
+}
+#endif
 
 // led funtion. in case of not indoor it does nothing
 void setled(byte r, byte g, byte b) {
@@ -440,6 +531,7 @@ void setled(byte show) {
 #ifdef NROFLEDS
   if (!show) {
     int i;
+    ledshift_task.disable();
     for (i = 0; i < NROFLEDS; i++) {
       setled(i, 0, 0, 0, 0);
     }
@@ -448,53 +540,6 @@ void setled(byte show) {
 #endif
 }
 
-uint32_t makeColor(int r, int g, int b) {
-#ifdef NROFLEDS
-  return led.Color(constrain(r,0,255),constrain(g,0,255),constrain(b,0,255));
-#endif
-}
-
-void monochrome(byte r, byte g, byte b) {
-#ifdef NROFLEDS
-  for (int i=0; i < NROFLEDS; i++) {
-    led.setPixelColor(i,r,g,b);
-  }
-  led.show();
-#endif
-}
-
-void monochrome(byte r, byte g, byte b, byte variant) {
-#ifdef NROFLEDS
-  for (int i=0; i < NROFLEDS; i++) {
-    led.setPixelColor(i,makeColor(r+random(-variant,variant+1),g+random(-variant,variant+1),b+random(-variant,variant+1)));
-  }
-  led.show();
-#endif
-}
-
-void ledsshift() {
-#ifdef NROFLEDS
-  uint32_t zeroled;
-  zeroled = led.getPixelColor(0);
-  for (int i=1; i < NROFLEDS; i++) {
-    led.setPixelColor(i-1,led.getPixelColor(i));
-  }
-  led.setPixelColor(NROFLEDS-1,zeroled);
-  led.show();
-#endif
-}
-
-void snow(uint32_t color, int interval) {
-#ifdef NROFLEDS
-    int which = random(0,NROFLEDS);
-    int oldcolor = led.getPixelColor(which);
-    led.setPixelColor(which, color);
-    led.show();
-    delay(interval);
-    led.setPixelColor(which,oldcolor);
-    led.show();
-#endif
-}
 
 void printConfig() {
 #ifdef DEBUG
@@ -820,6 +865,13 @@ if (!bme680.begin()) {
 
 #endif
 
+#if defined(INDOOR)
+  // Task Scheduler
+  runner.init();
+  runner.addTask(ledshift_task);
+
+#endif
+
   setled(0, 0, 0);
 }
 
@@ -930,7 +982,8 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     monochrome(r, g, b, v);
 
   } else if (in.startsWith("ledsshift")) {
-    ledsshift();
+    // ledsshift();
+    ledshift_task.enable();
 
   } else if (in.startsWith("snow ")) {  
     int position = 0;
@@ -1040,6 +1093,35 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     printCurrentTime();
   }
 
+  else if (in.startsWith("show temperature")) {
+    int position = 15;
+    
+    while (position < in.length() && in.substring(position, position + 1) != " ") {
+      position++;
+    }
+    if (position == 15) {
+      showTemperature(-10,40,(int)getLocalTemperature());
+    }
+    else
+      showTemperature(-10,40,in.substring(position).toInt());
+
+  }
+
+  else if (in.startsWith("show humidity")) {
+    int position = 12;
+    
+    while (position < in.length() && in.substring(position, position + 1) != " ") {
+      position++;
+    }
+    if (position == 12) {
+      showHumidity((int)getLocalHumidity());
+    }
+    else
+      showHumidity(in.substring(position).toInt());
+
+  }
+
+  
   else if (in.startsWith("now")) {
     printCurrentTime();
   }
@@ -1262,12 +1344,48 @@ void myPublish(char *topic, char *msg) {
   client.publish(topic, msg);
 }
 
+// if any sensor for temperature is defined, return temperature
+float getLocalTemperature() {
+#if defined(BME280ADDR)
+  return wetterSensor.readTempC();
+#elif defined(BME680ADDR)
+  if (bme680.performReading()) {
+      return bme680.temperature;
+  } else {
+    return 0.0;
+  }
+#elif defined(SI7021)
+  return si7021.readTemperature();
+#else
+  return 0;
+#endif
+}
+
+float getLocalHumidity() {
+#if defined(BME280ADDR)
+  return wetterSensor.readFloatHumidity();
+#elif defined(BME680ADDR)
+  if (bme680.performReading()) {
+      return bme680.humidity;
+  } else {
+    return 0.0;
+  }
+#elif defined(SI7021)
+  return si7021.readHumidity();
+#else
+  return 0;
+#endif
+  
+}
 
 unsigned long int loopDelay = 2000;
 unsigned long now;
 int lastMotion = 0, thisMotion = 0;
 
 void loop() {
+#if defined(INDOOR)
+  runner.execute();
+#endif
 
   if (!client.connected()) {
     now = millis();
@@ -1402,49 +1520,37 @@ void loop() {
     }
 #endif
 
-
-#ifdef BME280ADDR
+#if defined(BME280ADDR) || defined(BME680ADDR) || defined(SI7021)
     snprintf(topic, 50, "/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg, 50, "%s", String(wetterSensor.readTempC(), 2).c_str());
+    snprintf(msg, 50, "%s", String(getLocalTemperature(), 2).c_str()); 
     if (value > 2) {
       myPublish(topic, msg);
     }
 
+    snprintf(topic, 50, "/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
+    snprintf(msg, 50, "%s", String(getLocalHumidity, 2).c_str());
+    if (value > 2) {
+      myPublish(topic, msg);
+    }
+#endif
+
+#ifdef BME280ADDR
     snprintf(topic, 50, "/%s/%s/airpressure", Ssite.c_str(), Slocation.c_str());
     snprintf(msg, 50, "%s", String(wetterSensor.readFloatPressure() / 100, 2).c_str());
     if (value > 2) {
       myPublish(topic, msg);
     }
 
-#if !defined(SI7021)
-    snprintf(topic, 50, "/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg, 50, "%s", String(wetterSensor.readFloatHumidity(), 2).c_str());
-    if (value > 2) {
-      myPublish(topic, msg);
-    }
-#endif
 #endif
 
 #if defined(BME680ADDR)
     if (bme680.performReading()) {
-      snprintf(topic, 50, "/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
-      snprintf(msg, 50, "%s", String(bme680.temperature, 2).c_str());
-      if (value > 2) {  
-        myPublish(topic, msg);
-      }
-
       snprintf(topic, 50, "/%s/%s/airpressure", Ssite.c_str(), Slocation.c_str());
       snprintf(msg, 50, "%s", String(bme680.pressure / 100.0, 2).c_str());
       if (value > 2) {
         myPublish(topic, msg);
       }
     
-      snprintf(topic, 50, "/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
-      snprintf(msg, 50, "%s", String(bme680.humidity, 2).c_str());
-      if (value > 2) {
-        myPublish(topic, msg);
-      }
-
       snprintf(topic, 50, "/%s/%s/airquality", Ssite.c_str(), Slocation.c_str());
       snprintf(msg, 50, "%s", String(bme680.gas_resistance / 1000.0, 2).c_str());
       if (value > 2) {
@@ -1456,20 +1562,6 @@ void loop() {
       Serial.println("Error getting reading from BME680");
     }
 #endif
-#endif
-
-#if defined(SI7021)
-    snprintf(topic, 50, "/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg, 50, "%s", String(si7021.readTemperature(), 2).c_str());
-    if (value > 2) {
-      myPublish(topic, msg);
-    }
-
-    snprintf(topic, 50, "/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg, 50, "%s", String(si7021.readHumidity(), 2).c_str());
-    if (value > 2) {
-      myPublish(topic, msg);
-    }
 #endif
 
 #if defined(SDS011RX) && defined(SDS011TX)
