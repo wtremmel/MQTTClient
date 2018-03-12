@@ -482,8 +482,13 @@ void showTime(DateTime when) {
     hour12 = when.hour();
   }
 
-  for (int i=0; i<NROFLEDS; i++)
+  for (int i=NROFLEDS-1; i>=0; i--) {
     led.setPixelColor(i,0,0,0);
+    if (clock_task.isFirstIteration()) {
+      led.show();
+      delay(10);
+    }
+  }
 
   int hourStart = map(hour12,0,12,0,NROFLEDS-1);
   int hourWidth = map(2,0,12,0,NROFLEDS-1) - map(1,0,12,0,NROFLEDS-1);
@@ -557,6 +562,7 @@ void showHumidity(int thisHum) {
 
   if (clock_task.isEnabled()) {
     clock_task.disable();
+    clock_task.restart();
     clock_task.enableDelayed(5000);
   }
   led.show();
