@@ -33,7 +33,7 @@
 // #define ESP10 // Büro Wolfgang / Schifferstadt / Flur 1.OG
 // #define ESP11 // Lolin32 Lite
 // #define ESP12 // Schlafzimmer
-#define ESP13 // Lichterkette
+#define ESP13 // Lichterkette / Uhr
 
 #if defined(ESP1)
 // #define OUTDOOR 1
@@ -121,10 +121,11 @@
 
 #elif defined(ESP13)
 #define INDOOR 1
-#define NROFLEDS 50
+#define NROFLEDS 60
 #define DEBUG 1
 #define DS3231 0x68
 #define ALEXA
+#define CLOCK // behafe like a clock
 
 #endif
 
@@ -178,6 +179,10 @@ static byte rtc_initialized = 0;
 #if defined(INDOOR)
 #include <TaskScheduler.h>
 Scheduler runner;
+void ledsshift();
+void showTime();
+Task ledshift_task(2000,TASK_FOREVER,&ledsshift);
+Task clock_task(500,TASK_FOREVER,&showTime);
 #endif
 
 
@@ -385,6 +390,14 @@ uint32_t makeColor(int r, int g, int b) {
 #endif
 }
 
+uint32_t getColor(int i, uint8_t *r, uint8_t *g, uint8_t *b) {
+  uint32_t color = led.getPixelColor(i);
+  *r = (uint8_t)(color >> 16);
+  *g = (uint8_t)(color >>  8);
+  *b = (uint8_t)color;
+  return color;
+}
+
 // dims all colors equally by factor dimBy
 uint32_t dimColor(uint32_t color, int dimBy) {
   uint8_t 
@@ -392,9 +405,14 @@ uint32_t dimColor(uint32_t color, int dimBy) {
       g = (uint8_t)(color >>  8),
       b = (uint8_t)color;
 
-  r /= dimBy;
-  g /= dimBy;
-  b /= dimBy;
+  // r /= dimBy;
+  // g /= dimBy;
+  // b /= dimBy;
+
+  // lowest color 
+  r = (r == 0) ? 0 : dimBy;
+  g = (g == 0) ? 0 : dimBy;
+  b = (b == 0) ? 0 : dimBy;
   return makeColor(r,g,b);
 }
 
@@ -410,14 +428,77 @@ uint32_t rrmap(int in) {
 #endif
 }
 
+uint32_t addColor(int i, uint32_t color) {
+#ifdef NROFLEDS
+  if (i < 0 || i >= NROFLEDS) 
+    return 0;
+
+  uint8_t r,g,b;
+  getColor(i,&r,&g,&b);
+  uint8_t 
+      rx = (uint8_t)(color >> 16),
+      gx = (uint8_t)(color >>  8),
+      bx = (uint8_t)color;
+
+  uint32_t result = makeColor(r+rx,g+gx,b+bx);
+  led.setPixelColor(i,result);
+  return result;
+#endif
+}
+
 // displays a number of led with the center one brightest
 void centerLight(int center, unsigned int width, uint32_t color) {
 #ifdef NROFLEDS
   led.setPixelColor(rrmap(center),color);
   for (int i=1; i<=width; i++) {
-    led.setPixelColor(rrmap(center+i),dimColor(color,i*2));
-    led.setPixelColor(rrmap(center-i),dimColor(color,i*2));
+    led.setPixelColor(rrmap(center+i),dimColor(color,width+1-i));
+    led.setPixelColor(rrmap(center-i),dimColor(color,width+1-i));
   }
+#endif
+}
+
+// additive version - adds Colors together
+void centerLight(int center, unsigned int width, uint32_t color, bool additive) {
+#ifdef NROFLEDS
+  if (!additive)
+    return centerLight(center,width,color);
+
+  
+  addColor(rrmap(center),color);
+  for (int i=1; i<=width; i++) {
+    led.setPixelColor(rrmap(center+i),dimColor(color,width+1-i));
+    led.setPixelColor(rrmap(center-i),dimColor(color,width+1-i));
+  }
+#endif
+}
+
+
+
+void showTime(DateTime when) {
+  int hour12;
+  if (when.hour() >= 12) {
+    hour12 = when.hour()-12;
+  } else {
+    hour12 = when.hour();
+  }
+
+  for (int i=0; i<NROFLEDS; i++)
+    led.setPixelColor(i,0,0,0);
+
+  int hourStart = map(hour12,0,12,0,NROFLEDS-1);
+  int hourWidth = map(2,0,12,0,NROFLEDS-1) - map(1,0,12,0,NROFLEDS-1);
+  float hourFraction= when.minute()/60.0;
+  int hourEnd = hourStart + int((float)hourWidth * hourFraction);
+
+  centerLight(hourEnd,3,led.Color(200,0,0));
+  centerLight(map(when.minute(),0,59,0,NROFLEDS-1),2,led.Color(200,200,0));
+  led.setPixelColor(map(when.second(),0,59,0,NROFLEDS-1),200,200,200);
+  led.show();
+}
+
+void showTime() {
+#if defined(DS3231)
+  showTime(rtc.now());
 #endif
 }
 
@@ -427,35 +508,68 @@ void showTemperature(int minTemp, int maxTemp, int thisTemp) {
 #ifdef DEBUG
   Serial.println("showTemperature(" + String(minTemp) + "," + String(maxTemp) + "," + String(thisTemp) + ")");
 #endif
-  for (int i=minTemp; i<=0;i++) {
+
+  for (int i=0; i < NROFLEDS; i++)
+    led.setPixelColor(i,0,0,0);
+
+  if (clock_task.isEnabled()) {
+    clock_task.disable();
+    clock_task.enableDelayed(5000);
+  }
+  led.show();
+
+  int lastLed = 0;
+  for (int i=minTemp; i<=0 && i <= thisTemp;i++) {
     if (i == thisTemp) {
       led.setPixelColor(map(i,minTemp,maxTemp,0,NROFLEDS-1),0,0,254);
     } else {
-      led.setPixelColor(map(i,minTemp,maxTemp,0,NROFLEDS-1),0,0,1);
+      int thisLed = map(i,minTemp,maxTemp,0,NROFLEDS-1);
+      led.setPixelColor(thisLed,0,0,1);
+      if (thisLed-1 > lastLed)
+        led.setPixelColor(thisLed-1,0,0,1);
+      lastLed = thisLed;
     }
+    led.show();
+    delay(10);
   }
-  for (int i=1;i<=maxTemp;i++) {
+  for (int i=1;i<=maxTemp && i <= thisTemp;i++) {
     if (i == thisTemp) {
       led.setPixelColor(map(i,minTemp,maxTemp,0,NROFLEDS-1),254,0,0);
     } else {
-      led.setPixelColor(map(i,minTemp,maxTemp,0,NROFLEDS-1),1,0,0);
+      int thisLed = map(i,minTemp,maxTemp,0,NROFLEDS-1);
+      led.setPixelColor(thisLed,1,0,0);
+      if (thisLed-1 > lastLed)
+        led.setPixelColor(thisLed-1,1,0,0);
+      lastLed = thisLed;
     }
+    led.show();
+    delay(10);
   }
-  led.show();
+  
 #endif  
 }
 
 // show the humidity on a scale of 0 to 100
 void showHumidity(int thisHum) {
 #ifdef NROFLEDS
-  for (int i=0; i <= 100; i++) {
-    if (i <= thisHum) {
-      led.setPixelColor(map(i,0,100,0,NROFLEDS-1),0,20,20);
-    } else {
-      led.setPixelColor(map(i,0,100,0,NROFLEDS-1),0,0,0);
-    }
+  for (int i=0; i < NROFLEDS; i++)
+    led.setPixelColor(i,0,0,0);
+
+  if (clock_task.isEnabled()) {
+    clock_task.disable();
+    clock_task.enableDelayed(5000);
   }
   led.show();
+  
+  for (int i=0; i <= thisHum; i++) {
+    if (i == thisHum) {
+      led.setPixelColor(map(i,0,100,0,NROFLEDS-1),0,100,100);
+    } else if (i < thisHum) {
+      led.setPixelColor(map(i,0,100,0,NROFLEDS-1),0,2,2);
+    }
+    led.show();
+    delay(7);
+  }
 #endif
 }
 
@@ -489,8 +603,6 @@ void ledsshift() {
   led.setPixelColor(NROFLEDS-1,zeroled);
   led.show();
 }
-Task ledshift_task(2000,TASK_FOREVER,&ledsshift);
-
 
 void snow(uint32_t color, int interval) {
     int which = random(0,NROFLEDS);
@@ -873,6 +985,10 @@ if (!bme680.begin()) {
 #endif
 
   setled(0, 0, 0);
+#ifdef CLOCK // start the clock display
+  runner.addTask(clock_task);
+  clock_task.enable();
+#endif
 }
 
 void callback(char* topic, byte* payload, unsigned int length)  {
@@ -1124,6 +1240,10 @@ void callback(char* topic, byte* payload, unsigned int length)  {
   
   else if (in.startsWith("now")) {
     printCurrentTime();
+  }
+
+  else if (in.startsWith("clock")) {
+    showTime();
   }
 #endif
 
