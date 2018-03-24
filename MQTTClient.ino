@@ -33,7 +33,8 @@
 // #define ESP10 // Büro Wolfgang / Schifferstadt / Flur 1.OG
 // #define ESP11 // Lolin32 Lite
 // #define ESP12 // Schlafzimmer
-#define ESP13 // Lichterkette / Uhr
+// #define ESP13 // Lichterkette / Uhr
+#define NIKO1 // DHT22 + BME280 + one LED
 
 #if defined(ESP1)
 // #define OUTDOOR 1
@@ -125,7 +126,16 @@
 #define DEBUG 1
 #define DS3231 0x68
 #define ALEXA
-#define CLOCK // behafe like a clock
+
+#elif defined(NIKO1)
+#define DHT22 
+#define DHTPIN 13 
+#define DHTTYPE DHT22
+#define INDOOR 1
+#define DEBUG 1
+#define BME280ADDR 0x76
+// #define BMP180
+#define NROFLEDS 1
 
 #endif
 
@@ -139,7 +149,8 @@
 // 0x57 ATMEL732
 // 0x68 DS3231 Clock
 // 0x76 BME280
-// 0x77 BME680
+// 0x77 BME680 (also BMP180)
+
 
 
 #include <Arduino.h>
@@ -174,38 +185,27 @@ Adafruit_VEML6070 uv = Adafruit_VEML6070();
 #include "RTClib.h"
 RTC_DS3231 rtc;
 static byte rtc_initialized = 0;
+#endif
 
 // Task Scheduler only for Indoor use
 #if defined(INDOOR)
 #include <TaskScheduler.h>
 Scheduler runner;
 void ledsshift();
-void showTime();
 Task ledshift_task(2000,TASK_FOREVER,&ledsshift);
-Task clock_task(500,TASK_FOREVER,&showTime);
 #endif
 
-
-// print current time
-void printCurrentTime(void) {
-  if (rtc_initialized) {
-    DateTime now = rtc.now();
-    Serial.println("Now: " + String(now.year()) + "-" + String(now.month()) + "-" + String(now.day()) + " " + String(now.hour()) + ":" + String(now.minute()));
-  } else {
-    Serial.println("Error: RTC not initialized");
-  }
-}
-
-void rtcSetup() {
-  if (rtc.begin() && !rtc.lostPower()) {
-    rtc_initialized = 1;
-#ifdef DEBUG  
-    printCurrentTime();
+#if defined(DHT22)
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <DHT_U.h>
+DHT_Unified dht(DHTPIN, DHTTYPE);
 #endif
-    } else {
-    rtc_initialized = 0;
-  }
-}
+
+#if defined(BMP180)
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP085_U.h>
+Adafruit_BMP085_Unified bmp = Adafruit_BMP085_Unified(10085);
 #endif
 
 #if defined(ALEXA)
@@ -474,38 +474,6 @@ void centerLight(int center, unsigned int width, uint32_t color, bool additive) 
 
 
 
-void showTime(DateTime when) {
-  int hour12;
-  if (when.hour() >= 12) {
-    hour12 = when.hour()-12;
-  } else {
-    hour12 = when.hour();
-  }
-
-  for (int i=NROFLEDS-1; i>=0; i--) {
-    led.setPixelColor(i,0,0,0);
-    if (clock_task.isFirstIteration()) {
-      led.show();
-      delay(10);
-    }
-  }
-
-  int hourStart = map(hour12,0,12,0,NROFLEDS-1);
-  int hourWidth = map(2,0,12,0,NROFLEDS-1) - map(1,0,12,0,NROFLEDS-1);
-  float hourFraction= when.minute()/60.0;
-  int hourEnd = hourStart + int((float)hourWidth * hourFraction);
-
-  centerLight(hourEnd,3,led.Color(200,0,0));
-  centerLight(map(when.minute(),0,59,0,NROFLEDS-1),2,led.Color(200,200,0));
-  led.setPixelColor(map(when.second(),0,59,0,NROFLEDS-1),200,200,200);
-  led.show();
-}
-
-void showTime() {
-#if defined(DS3231)
-  showTime(rtc.now());
-#endif
-}
 
 // show the temperature on a scale from minTemp to maxTemp, negative values are blue, positive values are red
 void showTemperature(int minTemp, int maxTemp, int thisTemp) {
@@ -517,10 +485,7 @@ void showTemperature(int minTemp, int maxTemp, int thisTemp) {
   for (int i=0; i < NROFLEDS; i++)
     led.setPixelColor(i,0,0,0);
 
-  if (clock_task.isEnabled()) {
-    clock_task.disable();
-    clock_task.enableDelayed(5000);
-  }
+ 
   led.show();
 
   int lastLed = 0;
@@ -560,12 +525,6 @@ void showHumidity(int thisHum) {
   for (int i=0; i < NROFLEDS; i++)
     led.setPixelColor(i,0,0,0);
 
-  if (clock_task.isEnabled()) {
-    clock_task.disable();
-    clock_task.restart();
-    clock_task.enableDelayed(5000);
-  }
-  led.show();
   
   for (int i=0; i <= thisHum; i++) {
     if (i == thisHum) {
@@ -919,6 +878,17 @@ void setup() {
   setup_ADXL345();
 #endif
 
+#if defined(DHT22)
+  dht.begin();
+#endif
+
+#if defined(BMP180)
+  if(!bmp.begin()) {
+    /* There was a problem detecting the BMP085 ... check your connections */
+    Serial.println("Ooops, no BMP085 detected ... Check your wiring or I2C ADDR!");
+   }
+#endif
+
 // GY49 Light Sensor
 #ifdef GY49
   Wire.beginTransmission(GY49);
@@ -1103,6 +1073,7 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     int v = in.substring(position).toInt();
     monochrome(r, g, b, v);
 
+#ifdef NROFLEDS
   } else if (in.startsWith("ledsshift")) {
     // ledsshift();
     ledshift_task.enable();
@@ -1139,7 +1110,7 @@ void callback(char* topic, byte* payload, unsigned int length)  {
     snowInterval = n;
 
     snow(snowColor,n);
-
+#endif
     // Location - note that change becomes active after reboot only
   } else if (in.startsWith("location ")) {
     int position = 0;
@@ -1482,6 +1453,20 @@ float getLocalTemperature() {
   }
 #elif defined(SI7021)
   return si7021.readTemperature();
+#elif defined(DHT22)
+  sensors_event_t event;  
+  dht.temperature().getEvent(&event);
+  if (isnan(event.temperature)) {
+#ifdef DEBUG
+    Serial.println("Error reading temperature from DHT22!");
+#endif
+  } else {
+    return event.temperature;
+  }
+#elif defined(BMP180)
+  float temperature;
+  bmp.getTemperature(&temperature);
+  return(temperature)
 #else
   return 0;
 #endif
@@ -1498,10 +1483,34 @@ float getLocalHumidity() {
   }
 #elif defined(SI7021)
   return si7021.readHumidity();
+#elif defined(DHT22)
+  sensors_event_t event;  
+  dht.humidity().getEvent(&event);
+  if (isnan(event.relative_humidity)) {
+#ifdef DEBUG
+    Serial.println("Error reading humidity from DHT22!");
+#endif
+  } else {
+    return event.relative_humidity;
+  }
 #else
   return 0;
 #endif
   
+}
+
+float getLocalAirpressure() {
+#if defined(BME280ADDR)
+  return wetterSensor.readFloatPressure() / 100.0;
+#elif defined(BME680ADDR)
+  if (bme680.performReading()) {
+    return bme680.pressure / 100.0;
+  } else {
+    return 0.0;
+  }
+#else
+  return 0.0;
+#endif
 }
 
 unsigned long int loopDelay = 2000;
@@ -1523,7 +1532,9 @@ void loop() {
     }
   }
   client.loop();
+#if defined(ALEXA)
   fauxmo.handle();
+#endif
 
 #ifdef MOTION
   thisMotion = digitalRead(pirInput);
@@ -1646,37 +1657,35 @@ void loop() {
     }
 #endif
 
-#if defined(BME280ADDR) || defined(BME680ADDR) || defined(SI7021)
-    snprintf(topic, 50, "/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg, 50, "%s", String(getLocalTemperature(), 2).c_str()); 
-    if (value > 2) {
-      myPublish(topic, msg);
-    }
-
-    snprintf(topic, 50, "/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg, 50, "%s", String(getLocalHumidity, 2).c_str());
-    if (value > 2) {
-      myPublish(topic, msg);
-    }
-#endif
-
-#ifdef BME280ADDR
-    snprintf(topic, 50, "/%s/%s/airpressure", Ssite.c_str(), Slocation.c_str());
-    snprintf(msg, 50, "%s", String(wetterSensor.readFloatPressure() / 100, 2).c_str());
-    if (value > 2) {
-      myPublish(topic, msg);
-    }
-
-#endif
-
-#if defined(BME680ADDR)
-    if (bme680.performReading()) {
-      snprintf(topic, 50, "/%s/%s/airpressure", Ssite.c_str(), Slocation.c_str());
-      snprintf(msg, 50, "%s", String(bme680.pressure / 100.0, 2).c_str());
+    float thisTemp = getLocalTemperature();
+    if (thisTemp != 0.0) {
+      snprintf(topic, 50, "/%s/%s/temperature", Ssite.c_str(), Slocation.c_str());
+      snprintf(msg, 50, "%s", String(thisTemp, 2).c_str()); 
       if (value > 2) {
         myPublish(topic, msg);
       }
-    
+    }
+
+    float thisHumid = getLocalHumidity();
+    if (thisHumid > 0) {
+      snprintf(topic, 50, "/%s/%s/humidity", Ssite.c_str(), Slocation.c_str());
+      snprintf(msg, 50, "%s", String(thisHumid, 2).c_str());
+      if (value > 2) {
+        myPublish(topic, msg);
+      }
+    }
+
+    float thisPressure = getLocalAirpressure();
+    if (thisPressure > 0) {
+      snprintf(topic, 50, "/%s/%s/airpressure", Ssite.c_str(), Slocation.c_str());
+      snprintf(msg, 50, "%s", String(thisPressure, 2).c_str());
+      if (value > 2) {
+        myPublish(topic, msg);
+      }
+    }
+
+#if defined(BME680ADDR)
+    if (bme680.performReading()) {    
       snprintf(topic, 50, "/%s/%s/airquality", Ssite.c_str(), Slocation.c_str());
       snprintf(msg, 50, "%s", String(bme680.gas_resistance / 1000.0, 2).c_str());
       if (value > 2) {
