@@ -34,7 +34,9 @@
 // #define ESP11 // Lolin32 Lite
 // #define ESP12 // Schlafzimmer
 // #define ESP13 // Lichterkette / Uhr
-#define NIKO1 // DHT22 + BME280 + one LED
+// #define ESP14 // Display
+#define ESP15    // Keller
+// #define NIKO1 // DHT22 + BME280 + one LED
 
 #if defined(ESP1)
 // #define OUTDOOR 1
@@ -103,7 +105,7 @@
 #define DEBUG 1
 #define GY49 0x4a
 
-#elif defined(ESP8) || defined(ESP9) || defined(ESP10) || defined(ESP12)
+#elif defined(ESP8) || defined(ESP9) || defined(ESP10) || defined(ESP12) || defined(ESP15)
 // Indoor
 #define INDOOR 1
 #define VOLTAGE_PS 3000
@@ -136,6 +138,11 @@
 #define BME280ADDR 0x76
 // #define BMP180
 #define NROFLEDS 1
+
+#elif defined(ESP14)
+#define INDOOR 1
+#define DEBUG 1
+#define 
 
 #endif
 
@@ -1750,6 +1757,3 @@ void loop() {
     }
   }
 }
-
-
-
