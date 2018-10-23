@@ -27,7 +27,7 @@
 // #define ESP3 // Wohnzimmer
 // #define ESP4 // Garten
 // #define ESP6 // Test mit Lithium-Akku
-// #define ESP7  // Hausanschlussraum
+#define ESP7  // Hausanschlussraum
 // #define ESP8 // Fernsehzimmer
 // #define ESP9 // Heizraum
 // #define ESP10 // Büro Wolfgang / Schifferstadt / Flur 1.OG
@@ -35,7 +35,7 @@
 // #define ESP12 // Schlafzimmer
 // #define ESP13 // Lichterkette / Uhr
 // #define ESP14 // Display
-#define ESP15    // Keller
+// #define ESP15    // Keller
 // #define NIKO1 // DHT22 + BME280 + one LED
 
 #if defined(ESP1)
@@ -102,7 +102,7 @@
 #define VOLTAGE_PS 3000
 #define NROFLEDS 1
 #define BME280ADDR 0x76
-#define DEBUG 1
+// #define DEBUG 1
 #define GY49 0x4a
 
 #elif defined(ESP8) || defined(ESP9) || defined(ESP10) || defined(ESP12) || defined(ESP15)
@@ -347,6 +347,7 @@ long lastMsg = 0;
 char msg[50];
 char topic[50];
 int value = 0;
+int reconnect_counter = 0;
 
 
 int pirInput = PIRINPUT;
@@ -1280,12 +1281,29 @@ boolean reconnect() {
     // ... and resubscribe to my name
     client.subscribe(Smyname.c_str());
     delay(10);
+    reconnect_counter =0;
   } else {
+    reconnect_counter++;
+
 #ifdef DEBUG
     Serial.print("failed, rc=");
     Serial.print(client.state());
-    Serial.println(" try again in 5 seconds");
+    Serial.print(", counter=");
+    Serial.print(reconnect_counter);
 #endif
+
+    if (reconnect_counter >= 5) {
+      // reboot
+#ifdef DEBUG
+      Serial.println(", rebooting");
+      delay(10);
+#endif
+      ESP.restart();
+    } else {
+#ifdef DEBUG
+      Serial.println(", try again in 20 seconds");
+#endif
+    }
   }
   return client.connected();
 }
@@ -1431,7 +1449,7 @@ unsigned long lastReconnectAttempt = 0;
 void myPublish(char *topic, char *msg) {
   if (!client.connected()) {
     long now = millis();
-    if (now - lastReconnectAttempt > 5000) {
+    if (now - lastReconnectAttempt > 1000*20) {
       lastReconnectAttempt = now;
       if (reconnect()) {
         lastReconnectAttempt = 0;
@@ -1531,7 +1549,7 @@ void loop() {
 
   if (!client.connected()) {
     now = millis();
-    if (now - lastReconnectAttempt > 5000) {
+    if (now - lastReconnectAttempt > 1000*20) {
       lastReconnectAttempt = now;
       if (reconnect()) {
         lastReconnectAttempt = 0;
